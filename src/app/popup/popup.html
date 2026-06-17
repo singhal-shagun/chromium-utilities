@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>HTML → Markdown via LLM</title>
+    <link rel="stylesheet" href="popup.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "ai": "https://esm.sh/ai@5",
+          "@ai-sdk/openai-compatible": "https://esm.sh/@ai-sdk/openai-compatible@1"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="page">
+      <h1>HTML → Markdown via LLM</h1>
+
+      <label class="field">
+        <span class="field__label">Filename</span>
+        <input id="filename" type="text" readonly aria-readonly="true" />
+      </label>
+
+      <div id="rows" class="rows" role="list"></div>
+
+      <template id="row-template">
+        <div class="row" role="listitem">
+          <div class="row__fields">
+            <input class="row__selector" type="text" placeholder="CSS selector" aria-label="Selector" />
+            <input class="row__label" type="text" placeholder="Label (optional)" aria-label="Label" />
+          </div>
+          <button class="row__remove" type="button" aria-label="Remove row" title="Remove row">×</button>
+          <div class="row__error" role="alert"></div>
+        </div>
+      </template>
+
+      <div class="toolbar">
+        <button id="add-row" type="button" class="btn">+ Add row</button>
+        <button id="convert" type="button" class="btn btn--primary">Convert</button>
+      </div>
+
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <div id="spinner" class="spinner" hidden aria-hidden="true"></div>
+
+      <details id="fallback" class="fallback" hidden>
+        <summary>Download was blocked. Copy the Markdown manually:</summary>
+        <textarea id="fallback-text" readonly></textarea>
+        <div class="toolbar">
+          <button id="copy-btn" type="button" class="btn">Copy</button>
+        </div>
+      </details>
+
+      <p id="missing-settings" class="missing" hidden>
+        Set your endpoint in <a id="open-options" href="#">Options</a> first.
+      </p>
+    </main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
