@@ -1,335 +1,280 @@
-// src/app/popup/popup.js
-import { getSettings } from "../../core/storage.js";
-import { chatCompletions } from "../../core/llm.js";
-import { toDownloadUrl } from "../../core/markdown.js";
-import { inferFilename } from "../../core/filename.js";
+(function () {
+  const DEFAULT_MAX_BYTES = 200 * 1024;
+  const state = {
+    settings: null,
+    activeTabId: null,
+    activeTabTitle: 'page',
+    activePickerRow: null,
+    lastMarkdown: ''
+  };
 
-const MAX_HTML_BYTES = 200 * 1024; // 200 KB
-const SYSTEM_PROMPT =
-  "Convert the following HTML (a sequence of selected elements) to clean, semantic Markdown. " +
-  "Strip scripts, styles, ads, and navigation. Keep each element as a coherent section in the order " +
-  "presented. Output only the Markdown.";
-
-const rowsEl = document.getElementById("rows");
-const rowTemplate = document.getElementById("row-template");
-const addRowBtn = document.getElementById("add-row");
-const convertBtn = document.getElementById("convert");
-const filenameEl = document.getElementById("filename");
-const statusEl = document.getElementById("status");
-const spinnerEl = document.getElementById("spinner");
-const fallbackEl = document.getElementById("fallback");
-const fallbackTextEl = document.getElementById("fallback-text");
-const copyBtn = document.getElementById("copy-btn");
-const missingEl = document.getElementById("missing-settings");
-const openOptionsEl = document.getElementById("open-options");
-
-let activeTabId = null;
-let activeTabUrl = null;
-let busy = false;
-let downloadUrl = null; // { url, kind }
-
-function setStatus(text, kind) {
-  statusEl.textContent = text || "";
-  statusEl.classList.remove("status--ok", "status--err");
-  if (kind === "ok") statusEl.classList.add("status--ok");
-  if (kind === "err") statusEl.classList.add("status--err");
-}
-
-function setBusy(b) {
-  busy = b;
-  convertBtn.disabled = b;
-  addRowBtn.disabled = b;
-  convertBtn.textContent = b ? "Converting\u2026" : "Convert";
-  spinnerEl.hidden = !b;
-}
-
-function makeRow() {
-  const node = rowTemplate.content.firstElementChild.cloneNode(true);
-  const removeBtn = node.querySelector(".row__remove");
-  removeBtn.addEventListener("click", () => {
-    node.remove();
-  });
-  rowsEl.appendChild(node);
-  return node;
-}
-
-function getRowSelectors() {
-  return Array.from(rowsEl.querySelectorAll(".row")).map((row) => {
-    const sel = row.querySelector(".row__selector").value.trim();
-    return { row, selector: sel };
-  });
-}
-
-function setRowError(row, message) {
-  const errEl = row.querySelector(".row__error");
-  errEl.textContent = message || "";
-  row.classList.toggle("row--error", Boolean(message));
-}
-
-function clearAllRowErrors() {
-  rowsEl.querySelectorAll(".row").forEach((r) => setRowError(r, ""));
-}
-
-function countValidRows() {
-  const rows = getRowSelectors();
-  const filled = rows.filter((r) => r.selector);
-  return { filled, total: rows.length };
-}
-
-function updateStatusForValid() {
-  const { filled } = countValidRows();
-  if (filled.length === 0) {
-    setStatus("Add at least one selector.", "err");
-    return;
+  function $(selector) {
+    return document.querySelector(selector);
   }
-  setStatus(`${filled.length} selector${filled.length === 1 ? "" : "s"} ready.`);
-}
 
-function isUnsupportedUrl(url) {
-  if (!url) return true;
-  return /^(chrome|edge|about|chrome-extension|moz-extension):/i.test(url);
-}
+  function init() {
+    function start() {
+      bindEvents();
+      loadInitialState();
+    }
 
-function showFallback(md) {
-  fallbackTextEl.value = md;
-  fallbackEl.hidden = false;
-}
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', start);
+    } else {
+      start();
+    }
 
-function hideFallback() {
-  fallbackEl.hidden = true;
-  fallbackTextEl.value = "";
-  revokeDownloadUrl();
-}
+    chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+  }
 
-function revokeDownloadUrl() {
-  if (downloadUrl && downloadUrl.kind === "blob") {
+  function bindEvents() {
+    $('#add-row-btn').addEventListener('click', () => addRow());
+    $('#convert-btn').addEventListener('click', handleConvert);
+    $('#copy-btn').addEventListener('click', copyMarkdown);
+  }
+
+  async function loadInitialState() {
     try {
-      URL.revokeObjectURL(downloadUrl.url);
-    } catch (_) {
-      // ignore
+      const settings = await HtmlMarkdownStorage.getSettings();
+      state.settings = settings;
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      state.activeTabId = tab.id;
+      state.activeTabTitle = tab.title || 'page';
+      $('#filename').value = HtmlMarkdownPopup.inferFilename(state.activeTabTitle);
+      addRow();
+      await ensureInjected('extract');
+      await ensureInjected('picker');
+      setStatus('Ready to validate selectors.', 'info');
+    } catch (error) {
+      setStatus(`Unable to initialize popup: ${error.message}`, 'error');
     }
   }
-  downloadUrl = null;
-}
 
-function setFilenameFromTab(tab) {
-  const title = tab && tab.title ? tab.title : "";
-  filenameEl.value = inferFilename(title);
-}
+  function addRow(selectorValue = '') {
+    const row = document.createElement('div');
+    row.className = 'row-card';
+    row.innerHTML = `
+      <input class="selector-input" type="text" placeholder="Selector (e.g. article)" value="${selectorValue}" />
+      <div class="row-actions">
+        <button class="secondary pick-btn" type="button">Pick element</button>
+        <button class="secondary remove-btn" type="button">Remove</button>
+      </div>
+      <div class="row-status">Enter a selector to validate it.</div>
+    `;
 
-async function loadTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) {
-    setStatus("No active tab found.", "err");
-    return null;
-  }
-  activeTabId = tab.id;
-  activeTabUrl = tab.url || "";
-  setFilenameFromTab(tab);
-  return tab;
-}
-
-async function refreshMissingSettings() {
-  const s = await getSettings();
-  const missing = !s.apiKey;
-  missingEl.hidden = !missing;
-  return { settings: s, missing };
-}
-
-async function injectExtractor(tabId) {
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ["src/core/extract.js"],
-  });
-}
-
-async function runExtractInTab(tabId, selector) {
-  const [{ result }] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: (sel) => window.__extractBySelector(sel),
-    args: [selector],
-  });
-  return result;
-}
-
-async function ensureInjected(tabId) {
-  try {
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => typeof window.__extractBySelector === "function",
+    row.querySelector('.selector-input').addEventListener('input', () => {
+      row.querySelector('.row-status').textContent = 'Waiting for validation.';
+      row.querySelector('.row-status').className = 'row-status';
     });
-    if (result === true) return;
-  } catch (_) {
-    // fall through
-  }
-  await injectExtractor(tabId);
-}
 
-function utf8ByteLength(str) {
-  return new TextEncoder().encode(str).length;
-}
+    row.querySelector('.pick-btn').addEventListener('click', () => pickElementForRow(row));
+    row.querySelector('.remove-btn').addEventListener('click', () => {
+      if ($('#rows').children.length > 1) {
+        row.remove();
+      } else {
+        row.querySelector('.selector-input').value = '';
+        row.querySelector('.row-status').textContent = 'Remove the selector text to clear it.';
+        row.querySelector('.row-status').className = 'row-status';
+      }
+    });
 
-async function onConvert() {
-  if (busy) return;
-  hideFallback();
-  clearAllRowErrors();
-
-  if (activeTabId == null) {
-    const tab = await loadTab();
-    if (!tab) return;
+    $('#rows').appendChild(row);
   }
 
-  if (isUnsupportedUrl(activeTabUrl)) {
-    setStatus("This page cannot be scripted (browser-internal page).", "err");
-    return;
-  }
+  async function ensureInjected(kind) {
+    if (!state.activeTabId) {
+      return;
+    }
 
-  const { settings, missing } = await refreshMissingSettings();
-  if (missing) {
-    setStatus("Open Options to set your API key.", "err");
-    return;
-  }
-
-  const { filled } = countValidRows();
-  if (filled.length === 0) {
-    setStatus("Add at least one non-empty selector.", "err");
-    return;
-  }
-
-  setBusy(true);
-  setStatus("Validating selectors\u2026");
-  try {
-    await ensureInjected(activeTabId);
-  } catch (e) {
-    setBusy(false);
-    setStatus("Could not inject extractor: " + (e && e.message ? e.message : String(e)), "err");
-    return;
-  }
-
-  const htmls = [];
-  let failed = 0;
-  for (const { row, selector } of filled) {
-    let res;
     try {
-      res = await runExtractInTab(activeTabId, selector);
-    } catch (e) {
-      setRowError(row, "Extraction error: " + (e && e.message ? e.message : String(e)));
-      failed += 1;
-      continue;
+      const files = kind === 'extract' ? ['src/content-scripts/extract.js'] : ['src/content-scripts/picker.js'];
+      await chrome.scripting.executeScript({
+        target: { tabId: state.activeTabId },
+        files
+      });
+    } catch (error) {
+      console.warn(`Unable to inject ${kind} content script`, error);
     }
-    if (!res || !res.ok) {
-      setRowError(row, (res && res.error) || "Selector did not match exactly one element.");
-      failed += 1;
-      continue;
+  }
+
+  async function pickElementForRow(row) {
+    if (!state.activeTabId) {
+      setStatus('Open a page tab first.', 'error');
+      return;
     }
-    htmls.push(res.html);
+
+    state.activePickerRow = row;
+    await ensureInjected('picker');
+    try {
+      await chrome.tabs.sendMessage(state.activeTabId, { type: 'html-markdown-picker-start' });
+      setStatus('Hover over the page and click an element to capture its selector.', 'info');
+    } catch (error) {
+      setStatus(`Picker was unavailable: ${error.message}`, 'error');
+    }
   }
 
-  if (failed > 0) {
-    setBusy(false);
-    const { filled: f2 } = countValidRows();
-    setStatus(
-      `${f2.length - failed} of ${f2.length} selectors valid. Fix errors and try again.`,
-      "err",
-    );
-    return;
+  function handleRuntimeMessage(message) {
+    if (message && message.type === 'html-markdown-picker-selection') {
+      if (state.activePickerRow) {
+        const selectorInput = state.activePickerRow.querySelector('.selector-input');
+        selectorInput.value = message.selector;
+        state.activePickerRow.querySelector('.row-status').textContent = 'Selected from page.';
+        state.activePickerRow.querySelector('.row-status').className = 'row-status success';
+      }
+      setStatus('Selector captured. Validate it before converting.', 'success');
+    }
   }
 
-  const concatenated = htmls.join("\n\n");
-  const bytes = utf8ByteLength(concatenated);
-  if (bytes > MAX_HTML_BYTES) {
-    setBusy(false);
-    setStatus(
-      `HTML too large (${(bytes / 1024).toFixed(1)} KB > ${MAX_HTML_BYTES / 1024} KB). ` +
-        "Narrow your selectors.",
-      "err",
-    );
-    return;
+  async function handleConvert() {
+    setStatus('Validating selectors…', 'info');
+
+    const rows = Array.from($('#rows').children);
+    const selectors = [];
+    const errors = [];
+
+    for (const row of rows) {
+      const selectorInput = row.querySelector('.selector-input');
+      const selector = selectorInput.value.trim();
+      if (!selector) {
+        continue;
+      }
+
+      const validation = await validateSelector(selector);
+      if (!validation.ok) {
+        errors.push(validation.error);
+        const statusEl = row.querySelector('.row-status');
+        statusEl.textContent = validation.error;
+        statusEl.className = 'row-status error';
+        continue;
+      }
+
+      selectors.push({ selector, html: validation.html });
+      const statusEl = row.querySelector('.row-status');
+      statusEl.textContent = `Matched 1 element (${validation.html.length} chars).`;
+      statusEl.className = 'row-status success';
+    }
+
+    if (errors.length) {
+      setStatus(errors.join(' '), 'error');
+      return;
+    }
+
+    if (!selectors.length) {
+      setStatus('Add at least one selector before converting.', 'error');
+      return;
+    }
+
+    const concatenatedHtml = selectors.map((entry) => entry.html).join('\n\n');
+    const byteLength = new TextEncoder().encode(concatenatedHtml).length;
+    if (byteLength > DEFAULT_MAX_BYTES) {
+      setStatus(`Concatenated HTML is too large (${byteLength} bytes). Keep it below ${DEFAULT_MAX_BYTES} bytes.`, 'error');
+      return;
+    }
+
+    const markdown = await convertHtmlToMarkdown(concatenatedHtml, selectors);
+    state.lastMarkdown = markdown;
+    $('#markdown-output').value = markdown;
+    $('#markdown-output').parentElement.classList.add('has-output');
+    try {
+      await HtmlMarkdownPopup.downloadMarkdown(markdown, $('#filename').value || HtmlMarkdownPopup.inferFilename(state.activeTabTitle));
+      setStatus('Markdown downloaded. You can also copy the preview above.', 'success');
+    } catch (error) {
+      $('#markdown-output').hidden = false;
+      $('#copy-btn').hidden = false;
+      setStatus(`Download was blocked or failed: ${error.message}. The markdown preview is ready to copy.`, 'error');
+    }
   }
 
-  setStatus("Converting via LLM\u2026");
-  let md;
-  try {
-    const result = await chatCompletions({
-      baseUrl: settings.baseUrl,
-      apiKey: settings.apiKey,
-      model: settings.model,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: "```html\n" + concatenated + "\n```" },
-      ],
+  async function validateSelector(selector) {
+    if (!state.activeTabId) {
+      return { ok: false, error: 'No active tab available.' };
+    }
+
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: state.activeTabId },
+        func: (value) => {
+          if (typeof window.__HTML_TO_MD_EXTRACT === 'function') {
+            return window.__HTML_TO_MD_EXTRACT(value);
+          }
+          return { ok: false, count: 0, html: '', error: 'Extract helper is unavailable.' };
+        },
+        args: [selector]
+      });
+
+      const firstResult = results && results[0] && results[0].result;
+      if (!firstResult) {
+        return { ok: false, error: 'Validation did not return a result.' };
+      }
+
+      if (!firstResult.ok) {
+        return { ok: false, error: firstResult.error || 'Selector validation failed.' };
+      }
+
+      return {
+        ok: true,
+        html: firstResult.html,
+        count: firstResult.count
+      };
+    } catch (error) {
+      return { ok: false, error: error.message || 'Selector validation failed.' };
+    }
+  }
+
+  async function convertHtmlToMarkdown(concatenatedHtml) {
+    const baseUrl = (state.settings && state.settings.companionBaseUrl) || 'http://localhost:3000';
+    try {
+      const response = await fetch(`${baseUrl}/html-elements-to-markdown`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        body: concatenatedHtml
+      });
+
+      if (!response.ok) {
+        throw new Error(`Companion app returned ${response.status}`);
+      }
+
+      const markdown = await response.text();
+      if (markdown && markdown.trim()) {
+        return markdown;
+      }
+    } catch (error) {
+      console.warn('Companion conversion failed, using fallback.', error);
+    }
+
+    return buildFallbackMarkdown(concatenatedHtml);
+  }
+
+  function buildFallbackMarkdown(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const sections = Array.from(doc.body.children || []).map((element) => {
+      const text = element.textContent.replace(/\s+/g, ' ').trim();
+      const heading = text.slice(0, 40) || 'Section';
+      return `## ${heading}\n\n${text}`;
     });
-    md = result.text;
-  } catch (e) {
-    setBusy(false);
-    setStatus("LLM error: " + (e && e.message ? e.message : String(e)), "err");
-    return;
+
+    return sections.join('\n\n') || '# Converted page\n\nNo content was extracted.';
   }
 
-  setStatus("Starting download\u2026");
-  const filename = filenameEl.value || "converted.md";
-  revokeDownloadUrl();
-  downloadUrl = toDownloadUrl(md);
-  let downloadId = null;
-  try {
-    downloadId = await chrome.downloads.download({
-      url: downloadUrl.url,
-      filename,
-      saveAs: true,
-      conflictAction: "uniquify",
-    });
-  } catch (e) {
-    showFallback(md);
-    setBusy(false);
-    setStatus("Download was blocked. Use the box below to copy the Markdown manually.", "err");
-    return;
+  async function copyMarkdown() {
+    if (!state.lastMarkdown) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(state.lastMarkdown);
+      setStatus('Markdown copied to clipboard.', 'success');
+    } catch (error) {
+      setStatus(`Copy failed: ${error.message}`, 'error');
+    }
   }
 
-  if (downloadId == null || typeof downloadId !== "number") {
-    showFallback(md);
-    setBusy(false);
-    setStatus("Download was blocked. Use the box below to copy the Markdown manually.", "err");
-    return;
+  function setStatus(message, type) {
+    const statusEl = $('#status');
+    statusEl.textContent = message || '';
+    statusEl.className = `status ${type || ''}`.trim();
   }
 
-  // Revoke blob URL after Chrome has had a chance to read it.
-  setTimeout(revokeDownloadUrl, 60_000);
-
-  setBusy(false);
-  setStatus(`Downloaded as ${filename}.`, "ok");
-}
-
-function onAddRow() {
-  if (busy) return;
-  makeRow();
-  const rows = rowsEl.querySelectorAll(".row");
-  const last = rows[rows.length - 1];
-  if (last) last.querySelector(".row__selector").focus();
-  updateStatusForValid();
-}
-
-async function onCopyFallback() {
-  try {
-    await navigator.clipboard.writeText(fallbackTextEl.value);
-    setStatus("Copied to clipboard.", "ok");
-  } catch (e) {
-    setStatus("Copy failed: " + (e && e.message ? e.message : String(e)), "err");
-  }
-}
-
-function onOpenOptions(e) {
-  e.preventDefault();
-  chrome.runtime.openOptionsPage();
-}
-
-window.addEventListener("DOMContentLoaded", async () => {
-  addRowBtn.addEventListener("click", onAddRow);
-  convertBtn.addEventListener("click", onConvert);
-  copyBtn.addEventListener("click", onCopyFallback);
-  openOptionsEl.addEventListener("click", onOpenOptions);
-
-  makeRow();
-  await loadTab();
-  await refreshMissingSettings();
-  updateStatusForValid();
-});
+  init();
+})();

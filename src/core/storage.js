@@ -1,37 +1,73 @@
-// src/core/storage.js
-// Settings storage: apiKey in chrome.storage.local, baseUrl/model in chrome.storage.sync.
-
-const DEFAULTS = {
-  baseUrl: "https://api.openai.com",
-  model: "gpt-4o-mini",
-};
-
-export async function getSettings() {
-  const [sync, local] = await Promise.all([
-    chrome.storage.sync.get(["baseUrl", "model"]),
-    chrome.storage.local.get(["apiKey"]),
-  ]);
-  return {
-    baseUrl: typeof sync.baseUrl === "string" && sync.baseUrl ? sync.baseUrl : DEFAULTS.baseUrl,
-    model: typeof sync.model === "string" && sync.model ? sync.model : DEFAULTS.model,
-    apiKey: typeof local.apiKey === "string" ? local.apiKey : "",
+(function (global) {
+  const DEFAULT_SETTINGS = {
+    companionBaseUrl: 'http://localhost:3000',
+    lastFilename: ''
   };
-}
 
-export async function saveSettings({ baseUrl, apiKey, model }) {
-  const syncUpdate = {};
-  if (typeof baseUrl === "string" && baseUrl.trim()) {
-    syncUpdate.baseUrl = baseUrl.trim();
+  function getSettings() {
+    return Promise.all([
+      new Promise((resolve, reject) => {
+        chrome.storage.sync.get(DEFAULT_SETTINGS, (result) => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+            return;
+          }
+          resolve(result);
+        });
+      }),
+      new Promise((resolve, reject) => {
+        chrome.storage.local.get({ lastFilename: '' }, (result) => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+            return;
+          }
+          resolve(result);
+        });
+      })
+    ]).then(([syncSettings, localSettings]) => ({
+      ...DEFAULT_SETTINGS,
+      ...syncSettings,
+      ...localSettings
+    }));
   }
-  if (typeof model === "string" && model.trim()) {
-    syncUpdate.model = model.trim();
+
+  function saveSettings(settings) {
+    return new Promise((resolve, reject) => {
+      const syncSettings = {
+        companionBaseUrl: settings.companionBaseUrl || DEFAULT_SETTINGS.companionBaseUrl
+      };
+      const localSettings = {
+        lastFilename: settings.lastFilename || ''
+      };
+
+      chrome.storage.sync.set(syncSettings, () => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+          return;
+        }
+
+        chrome.storage.local.set(localSettings, () => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+            return;
+          }
+          resolve();
+        });
+      });
+    });
   }
-  const localUpdate = {};
-  if (typeof apiKey === "string") {
-    localUpdate.apiKey = apiKey;
+
+  global.HtmlMarkdownStorage = {
+    DEFAULT_SETTINGS,
+    getSettings,
+    saveSettings
+  };
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      DEFAULT_SETTINGS,
+      getSettings,
+      saveSettings
+    };
   }
-  await Promise.all([
-    Object.keys(syncUpdate).length ? chrome.storage.sync.set(syncUpdate) : Promise.resolve(),
-    Object.keys(localUpdate).length ? chrome.storage.local.set(localUpdate) : Promise.resolve(),
-  ]);
-}
+})(typeof window !== 'undefined' ? window : globalThis);

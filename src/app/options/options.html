@@ -1,75 +1,32 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <title>Chromium utilities — Options</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HTML → Markdown Settings</title>
     <link rel="stylesheet" href="options.css" />
-    <script type="importmap">
-      {
-        "imports": {
-          "ai": "https://esm.sh/ai@5",
-          "@ai-sdk/openai-compatible": "https://esm.sh/@ai-sdk/openai-compatible@1"
-        }
-      }
-    </script>
   </head>
   <body>
-    <main class="page">
-      <h1>Options</h1>
-      <p class="hint">
-        Configure the OpenAI-compatible chat-completions endpoint. The API key is stored locally on
-        this device; the base URL and model are synced.
-      </p>
+    <main class="options-shell">
+      <header>
+        <h1>Companion App</h1>
+        <p>Configure where the extension should send HTML for Markdown conversion.</p>
+      </header>
 
-      <form id="settings-form" class="form" novalidate>
-        <label class="field">
-          <span class="field__label">Base URL</span>
-          <input
-            id="baseUrl"
-            name="baseUrl"
-            type="url"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="https://api.openai.com"
-          />
-          <span class="field__help"
-            >The base URL of an OpenAI-compatible API. <code>/v1/chat/completions</code> is appended
-            automatically.</span
-          >
-        </label>
+      <section class="field-group">
+        <label for="companion-base-url">Companion base URL</label>
+        <input id="companion-base-url" name="companion-base-url" type="url" placeholder="http://localhost:3000" />
+      </section>
 
-        <label class="field">
-          <span class="field__label">API key</span>
-          <input id="apiKey" name="apiKey" type="password" autocomplete="off" spellcheck="false" />
-          <span class="field__help">Stored in <code>chrome.storage.local</code>.</span>
-        </label>
+      <section class="toolbar">
+        <button id="save-btn" type="button">Save</button>
+        <button id="test-btn" class="secondary" type="button">Test connection</button>
+      </section>
 
-        <label class="field">
-          <span class="field__label">Model</span>
-          <input
-            id="model"
-            name="model"
-            type="text"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="gpt-4o-mini"
-          />
-        </label>
-
-        <div class="actions">
-          <button id="save-btn" type="submit" class="btn btn--primary">Save</button>
-          <button id="test-btn" type="button" class="btn">Test connection</button>
-        </div>
-
-        <div id="status" class="status" role="status" aria-live="polite"></div>
-      </form>
-
-      <p class="cors">
-        Note: cross-origin <code>fetch</code> from this extension requires the endpoint to return
-        permissive CORS headers.
-      </p>
+      <section id="status" class="status" aria-live="polite"></section>
     </main>
 
-    <script type="module" src="options.js"></script>
+    <script src="../../core/storage.js"></script>
+    <script src="options.js"></script>
   </body>
 </html>

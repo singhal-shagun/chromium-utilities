@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "echo 'no framework'",
     "build": "echo 'no build step'",
-    "package": "echo 'manual packaging'"
+    "package": "echo 'manual packaging'",
+    "test": "node --test"
   },
   "dependencies": {
 

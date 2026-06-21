@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Chromium utilities",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A collection of browser utilities.",
   "permissions": ["activeTab", "scripting", "storage", "downloads"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*", "https://*/*"],
   "action": {
     "default_title": "Chromium utilities",
     "default_popup": "src/app/popup/popup.html"
@@ -12,7 +13,11 @@
     "page": "src/app/options/options.html",
     "open_in_tab": true
   },
-  "content_security_policy": {
-    "extension_pages": "script-src 'self' https://esm.sh; connect-src https:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:"
-  }
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/content-scripts/extract.js", "src/content-scripts/picker.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }

@@ -10,7 +10,6 @@ Tech Stack
 - JavaScript (no TypeScript).
 - Standard Chromium extension APIs (Manifest V3).
 - HTML/CSS/vanilla JS for popup, options, and newtab UI.
-- **LLM calls**: [Vercel AI SDK](https://ai-sdk.dev/) (`ai` + `@ai-sdk/openai-compatible`). The extension has no build step, so both packages are loaded at runtime from `https://esm.sh` via an import map declared on each HTML page. The base URL/model in the Options page go through `createOpenAICompatible({ name, apiKey, baseURL })`; we call `generateText` / `streamText` against `provider(modelId)`.
 
 Project Structure
 -----------------
@@ -19,27 +18,40 @@ README.md
 docs/
 src/
   core/
-    assets/
   app/
-    popup/
+    core/
       assets/
-    options/
-      assets/
-    newtab/
-      assets/
+    entrypoints/
+      context-menu/
+      keyboard-shortcuts/
+      new-tab/
+      options/
+      omnibox/
+      popup/
+      side-panel/
+      devtools-panel/
+    content-scripts/
+    service-worker/
+      service-worker.js
 ```
-`core/` contains shared architecture, utilities, and base classes.
+
+- `core/` contains assets, architecture, utilities, and base classes shared by the extension's entrypoints, content scripts, service worker.
+- `app/` contains all user‑facing entry points.
+  - `app/core/` contains utilities and assets (e.g., UI components, styles) shared across entry points.
+  - `entrypoints/` contains the HTML, JS, and assets for each user‑facing entry point (popup, options, newtab, etc).
+- `content-scripts/` contains scripts injected into web pages (e.g., element picker, extraction).
+- `service-worker/` contains the background service worker script and related modules. Do not put all service worker code in service-worker.js. Modularize the code and import it into service-worker.js to keep it organized and maintainable.
 
 General Rules
 -------------
 - Always maintain MV3 compliance: no dynamic code execution, no inline scripts.
-- Avoid heavy dependencies; prefer utilities over frameworks.
+- Follow YAGNI principles, unless breaking them improves developer experience (DX).
 - Keep background logic minimal — offload UI and long operations where possible.
 	Meaning: Background scripts should react to events (e.g., tab changes) and forward heavy or interactive work to UI pages or content scripts to avoid blocking.
 - All code should be idempotent on reload — extensions auto‑reload during development.
 	Meaning: If a script runs twice (due to reload), it must not register duplicate listeners, duplicate DOM changes, or produce corrupted state.
-- Never store sensitive data; only store minimal settings in `chrome.storage.sync`.
-- Since this a Chromium extension, create and manage a CHROMEWEBSTORE.md file. You can use this project's chrome-extensions skill to learn about the format of this CHROMEWEBSTORE.md file.
+- This chrome extension will have a companion application on the user's system (http://localhost:3000, or as configured in Options). Route all calls to external domains through the companion app to avoid CORS issues.
+- Since this a Chromium extension, create and manage a CHROMEWEBSTORE.md file. Refer this project's chrome-extensions skill to learn about the format of this CHROMEWEBSTORE.md file.
 
 Debugging
 ---------
@@ -47,11 +59,6 @@ Debugging
 - The DevTools MCP is the fastest way to validate extension flows end‑to‑end: load the popup / options HTML directly via `navigate_page` to a `file://` URL, then drive the UI with `evaluate_script` / `take_snapshot` and watch `list_console_messages` for errors.
 - For pure‑logic modules (e.g. `src/core/*.js`), prefer a quick `node --check` and a small `node --input-type=module -e "..."` snippet to exercise the function in isolation.
 - Always check the console and network panels after a manual change — MV3 rejects `eval`, inline `<script>`, and unregistered `host_permissions` at load time, with messages only visible in DevTools.
-
-Safe Commands
--------------
-- `npm install` (add dependencies). Keep dependency count low.
-- `npm run build` (build the extension if a build step exists)
 
 Hard Safety Rules
 -----------------
