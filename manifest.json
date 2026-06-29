@@ -3,21 +3,33 @@
   "name": "Chromium utilities",
   "version": "0.0.2",
   "description": "A collection of browser utilities.",
-  "permissions": ["activeTab", "scripting", "storage", "downloads"],
-  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*", "https://*/*"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "downloads",
+    "notifications",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "action": {
-    "default_title": "Chromium utilities",
-    "default_popup": "src/app/popup/popup.html"
+    "default_title": "Chromium utilities"
+  },
+  "side_panel": {
+    "default_path": "src/app/sidepanel/sidepanel.html"
   },
   "options_ui": {
     "page": "src/app/options/options.html",
     "open_in_tab": true
   },
-  "content_scripts": [
-    {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["src/content-scripts/extract.js", "src/content-scripts/picker.js"],
-      "run_at": "document_idle"
-    }
-  ]
+  "background": {
+    "service_worker": "src/background/service-worker.js"
+  }
 }

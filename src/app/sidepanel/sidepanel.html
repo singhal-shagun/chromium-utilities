@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HTML → Markdown</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="header">
+        <h1>HTML → Markdown</h1>
+        <p>Pick elements, validate them, and convert them to Markdown.</p>
+      </header>
+
+      <!-- Filename -->
+      <section class="field-group">
+        <label for="filename">Filename</label>
+        <input
+          id="filename"
+          name="filename"
+          type="text"
+          placeholder="page.md" />
+      </section>
+
+      <!-- Selector rows -->
+      <section id="rows" class="rows" aria-label="Selector rows"></section>
+
+      <!-- Toolbar -->
+      <section class="toolbar">
+        <button id="add-row-btn" type="button">Add selector</button>
+        <button id="convert-btn" type="button" class="primary">Convert</button>
+      </section>
+
+      <!-- Step-by-step feedback indicators -->
+      <section id="steps" class="steps" aria-label="Conversion progress">
+        <div class="step" data-step="connection">
+          <span class="step-icon">○</span>
+          <span class="step-label">Connection</span>
+          <span class="step-status"></span>
+        </div>
+        <div class="step" data-step="extraction">
+          <span class="step-icon">○</span>
+          <span class="step-label">Extraction</span>
+          <span class="step-status"></span>
+        </div>
+        <div class="step" data-step="upload">
+          <span class="step-icon">○</span>
+          <span class="step-label">Upload &amp; Download</span>
+          <span class="step-status"></span>
+        </div>
+      </section>
+
+      <!-- Status messages -->
+      <section id="status" class="status" aria-live="polite"></section>
+    </main>
+
+    <script src="../../core/slug.js"></script>
+    <script src="../../core/storage.js"></script>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

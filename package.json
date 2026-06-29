@@ -8,12 +8,14 @@
     "dev": "echo 'no framework'",
     "build": "echo 'no build step'",
     "package": "echo 'manual packaging'",
-    "test": "node --test"
-  },
-  "dependencies": {
-
+    "test": "node --test",
+    "lint": "eslint src/ tests/",
+    "lint:fix": "eslint --fix src/ tests/",
+    "format": "prettier --write \"src/**/*.{js,css,html}\" \"tests/**/*.js\" \"manifest.json\"",
+    "format:check": "prettier --check \"src/**/*.{js,css,html}\" \"tests/**/*.js\" \"manifest.json\""
   },
   "devDependencies": {
+    "@ianvs/prettier-plugin-sort-imports": "^4.7.1",
     "prettier": "3.2.4"
   }
 }
