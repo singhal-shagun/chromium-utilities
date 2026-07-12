@@ -1,4 +1,4 @@
-;(function () {
+; (function () {
   const companionInput = document.getElementById("companion-base-url")
   const statusEl = document.getElementById("status")
 

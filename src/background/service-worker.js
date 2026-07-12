@@ -40,10 +40,21 @@
 
   async function healthCheck(baseUrl) {
     const url = `${baseUrl.replace(/\/+$/, "")}/api/companion-app-connection-test`
-    const response = await fetch(url, {
-      method: "GET",
-      signal: AbortSignal.timeout(5000)
-    })
+    let response
+    try {
+      response = await fetch(url, {
+        method: "GET",
+        signal: AbortSignal.timeout(5000)
+      })
+    } catch (err) {
+      // fetch throws a generic "Failed to fetch" (TypeError) when the
+      // companion app is not running / not reachable. Make it actionable.
+      throw new Error(
+        `Companion app not reachable at ${baseUrl}. ` +
+        `Make sure it is running and allowed (host_permissions). ` +
+        `Original error: ${err.message}`
+      )
+    }
     if (!response.ok) {
       throw new Error(`Health check returned ${response.status}`)
     }
@@ -80,28 +91,63 @@
     return results
   }
 
+  // ─── Service worker keep-alive ──────────────────────────────────
+  // MV3 service workers are killed after ~30s of inactivity. A pending
+  // fetch() that is simply waiting for a response does NOT count as
+  // activity, so long-running companion calls get interrupted. Writing
+  // to chrome.storage.local (or any extension API) resets the idle
+  // timer, keeping the worker alive while the request waits.
+  function createHeartbeat(intervalMs = 20000) {
+    let timer = null
+    const tick = () => {
+      // Trivial write — the call itself (not the value) resets the
+      // service worker idle timer. 20s < 30s leaves a safe margin.
+      chrome.storage.local.set({ __swHeartbeat: Date.now() }).catch(() => { })
+    }
+    return {
+      start() {
+        if (timer) return
+        tick()
+        timer = setInterval(tick, intervalMs)
+      },
+      stop() {
+        if (timer) {
+          clearInterval(timer)
+          timer = null
+        }
+      }
+    }
+  }
+
   // ─── POST to companion ──────────────────────────────────────────
 
   async function postHtmlAndGetZip(baseUrl, concatenatedHtml) {
     const url = `${baseUrl.replace(/\/+$/, "")}/api/html-elements-to-markdown`
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify({ html: concatenatedHtml })
-    })
-    if (!response.ok) {
-      let detail = ""
-      try {
-        const body = await response.text()
-        detail = body ? ` — ${body.slice(0, 500)}` : ""
-      } catch {
-        // ignore read errors
+    // Keep the service worker alive across a slow companion response.
+    const heartbeat = createHeartbeat()
+    heartbeat.start()
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ html: concatenatedHtml })
+      })
+      if (!response.ok) {
+        let detail = ""
+        try {
+          const body = await response.text()
+          detail = body ? ` — ${body.slice(0, 500)}` : ""
+        } catch {
+          // ignore read errors
+        }
+        throw new Error(`Companion app returned ${response.status}${detail}`)
       }
-      throw new Error(`Companion app returned ${response.status}${detail}`)
+      // The response is a ZIP archive (binary blob)
+      const blob = await response.blob()
+      return blob
+    } finally {
+      heartbeat.stop()
     }
-    // The response is a ZIP archive (binary blob)
-    const blob = await response.blob()
-    return blob
   }
 
   // ─── Download ZIP ───────────────────────────────────────────────
@@ -130,17 +176,27 @@
   // ─── Notifications ──────────────────────────────────────────────
 
   function showNotification(title, message) {
-    try {
-      chrome.notifications.create({
-        type: "basic",
-        iconUrl: chrome.runtime.getURL("icons/icon128.png"),
-        title: title,
-        message: message,
-        contextMessage: "HTML → Markdown"
-      })
-    } catch (_) {
-      // Notification icon not available; skip gracefully
+    const iconUrl = chrome.runtime.getURL("icons/icon128.png")
+    const baseOpts = {
+      type: "basic",
+      title: title,
+      message: message,
+      contextMessage: "HTML → Markdown"
     }
+
+    // Pass a callback (not a promise) so the async image-download failure
+    // from Chrome's notification internals cannot surface as an
+    // "Uncaught (in promise)" rejection in the extension's error log.
+    chrome.notifications.create({ ...baseOpts, iconUrl }, () => {
+      if (chrome.runtime.lastError) {
+        // Icon was missing/unreachable ("Unable to download all specified
+        // images") — retry without an icon so the notification still shows.
+        const err = chrome.runtime.lastError.message || ""
+        if (/image/i.test(err)) {
+          chrome.notifications.create(baseOpts, () => { })
+        }
+      }
+    })
   }
 
   // ─── Message handler (side panel ↔ service worker) ─────────────
