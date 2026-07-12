@@ -1,4 +1,4 @@
-; (function (global) {
+;(function (global) {
     /** Basic slug fallback used when slug.js is unavailable. */
     function basicSlugify(text) {
         return String(text)

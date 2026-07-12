@@ -6,9 +6,12 @@ kind: plan
 
 # HTML → Markdown (LLM)
 
-**One-paragraph summary**
+**Summary**
 
-Provide an MV3 Chrome extension feature that collects selected parts of a web page and sends the concatenated HTML to a companion application running on the developer's machine (default: `http://localhost:3000`) for conversion to Github-Flavoured Markdown (GFM). The **side panel** UI supports element-picking (hover-to-select), an editable filename pre-filled from the active tab title, and full row editing (select/change/delete) for selectors. Unlike a popup, the side panel stays open while interacting with the page, making the element picker usable without the UI closing. The extension performs extraction and preflight checks (exactly-one match per selector, size guard) and then POSTs the HTML to the companion app, which returns a ZIP archive containing the Markdown and associated assets to be downloaded by the extension.
+- An MV3 Chrome extension feature that collects selected parts of a web page and sends the concatenated HTML to a companion application on the developer's machine (default: `http://localhost:3000`) for conversion to Github-Flavoured Markdown (GFM).
+- The **side panel** UI supports element-picking (hover-to-select), an editable filename pre-filled from the active tab title, and full row editing (select / change / delete) for selectors.
+- Unlike a popup, the side panel stays open while interacting with the page, so the element picker remains usable without the UI disappearing.
+- The extension runs extraction and preflight checks (exactly-one match per selector, size guard), then POSTs the HTML to the companion app, which returns a ZIP archive (Markdown + assets) for the extension to download.
 
 **Done means:**
 
@@ -53,7 +56,7 @@ High-level modules:
 - `src/core/storage.js` — get/save settings; `companionBaseUrl` in `chrome.storage.sync`
 - `src/core/slug.js` — `slugify(text)` utility (UMD-style global so the side panel can load it without a bundler)
 - `src/content-scripts/extract.js` — injected on demand (no `content_scripts` manifest entry); attaches `extractBySelector(selector)` to `window.__HTML_TO_MD_EXTRACT`, returns `{ok, count, html, error}`
-- `src/content-scripts/picker.js` — injected on demand; renders a hover overlay and sends the captured selector to the side panel via `chrome.runtime.sendMessage({ type: "html-markdown-picker-selection", selector })`
+- `src/content-scripts/picker.js` — injected on demand; renders a hover overlay, builds a heuristic selector by walking up the DOM, and sends the captured selector to the side panel via `chrome.runtime.sendMessage({ type: "html-markdown-picker-selection", selector })` (see _Picker selector heuristic_ in Key Decisions)
 - `src/app/options/*` — settings UI: companion `baseUrl` + "Test connection" health check. No "model preference" field — the LLM model is chosen by the companion app, not the extension.
 - `src/app/sidepanel/*` — selector rows, validation, picker trigger, download; uses `chrome.runtime.onMessage` (tab resolve, permission check, picker injection, selector validation) plus a long-lived port (`html-markdown-convert`) for the convert flow; stays open while interacting with the page
 
@@ -71,7 +74,7 @@ sequenceDiagram
 
   U->>S: Click Convert
   S->>B: Port message {selectors, filename}
-  B->>B: Checkapi/ Permissions (downloads, etc.)
+  B->>B: Check API permissions (downloads, etc.)
   B->>C: GET /api/companion-app-connection-test (Pre-flight)
   alt Companion Unreachable / Permission Denied
     C-->>B: Error / Timeout
@@ -145,11 +148,16 @@ stateDiagram-v2
 
 ### Side panel over popup
 
-The extension uses `chrome.sidePanel` instead of `action.default_popup`. Clicking the toolbar icon opens the side panel directly (`chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`). This avoids the popup closing when the user interacts with the page — essential for the element picker to work without the UI disappearing.
+- The extension uses `chrome.sidePanel` instead of `action.default_popup`; clicking the toolbar icon opens the side panel directly (`chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`).
+- This avoids the popup closing when the user interacts with the page — essential for the element picker to work without the UI disappearing.
 
 ### Filename inference and editability
 
-The side panel pre-fills the filename by inferring it from the active tab title using `slugify(tab.title) + '.md'`. The filename is editable in the side panel and used (minus its extension) as the base name for the downloaded `<name>.zip`. `inferFilename()` lives inside the side panel IIFE (and is mirrored in `tests/slug.test.js` because it is not yet extracted into a shared module). The filename is effectively ephemeral per session — there is no global default filename persisted to storage.
+- The side panel pre-fills the filename from the active tab title using `slugify(tab.title) + '.md'`.
+- The filename is editable in the side panel and, minus its extension, is used as the base name for the downloaded `<name>.zip`.
+- The filename is effectively ephemeral per session — no global default filename is persisted to storage.
+- `inferFilename()` is the helper that derives the default filename from the active tab title.
+- It is unit-tested in `tests/slug.test.js` (alongside `slugify`), so the filename-inference rules are covered independently of the UI.
 
 ### Selector strictness
 
@@ -157,18 +165,32 @@ Each selector must match exactly one element. This simplifies author expectation
 
 ### Storage split
 
-The extension stores the companion app `baseUrl` in `chrome.storage.sync` so settings can sync across the user's Chrome instances.
+- The companion app `baseUrl` is the only value the extension persists, stored in `chrome.storage.sync` so it syncs across the user's Chrome instances.
+- The side panel infers the filename from the active tab title at runtime, so no filename (or any other UI state) is ever written to storage.
 
 ### Companion-app integration
 
-- Conversion is performed by the user's companion application at the configured `baseUrl` (default `http://localhost:3000`). The background worker POSTs the concatenated HTML (as JSON `{ "html": "<concatenated>" }`) to the companion endpoint `POST {baseUrl}/api/html-elements-to-markdown` and expects a ZIP archive containing the Markdown and assets in response. This bypasses cross-origin restrictions with remote LLMs and delegates credential and remote-API management to the local app.
+- **Conversion runs on a companion app** at the configured `baseUrl` (default `http://localhost:3000`):
+  - The background worker POSTs the concatenated HTML as JSON `{ "html": "<concatenated>" }` to `POST {baseUrl}/api/html-elements-to-markdown`.
+  - The companion returns a ZIP archive containing the Markdown and assets.
+  - This bypasses cross-origin restrictions with remote LLMs and delegates credential and remote-API management to the local app.
 - The service worker runs the pre-flight health check with `GET {baseUrl}/api/companion-app-connection-test` (5s `AbortSignal.timeout`) before extraction.
 - The Options page "Test connection" button runs the same `GET {baseUrl}/api/companion-app-connection-test` health check, so a green Options check now confirms the conversion flow can reach the companion.
-- `host_permissions` in the manifest cover `http://localhost/*` and `http://127.0.0.1/*`. For non-local companion URLs (and to inject/extract on the visited page) the extension also declares `optional_host_permissions` for `http://*/*` and `https://*/*` and requests them at runtime via `chrome.permissions.request` (Options requests the specific companion origin on save; the side panel requests broad page permissions before injecting the picker/extract scripts).
+- **Companion request-body limit.** The extension POSTs the full concatenated HTML as a JSON body, so the companion app's `express.json` parser must accept bodies up to at least `MAX_HTML_BYTES * 2` (where `MAX_HTML_BYTES` mirrors the client's 200 KB size guard).
+  - The default 100 KiB Express limit returns an opaque HTML `413` for large pages before the app-level guard runs; this was fixed in the companion app's `server.js`.
+- **Host permissions** are declared in the manifest for `http://localhost/*` and `http://127.0.0.1/*`. For non-local companion URLs (and to inject/extract on the visited page) the extension also declares `optional_host_permissions` for `http://*/*` and `https://*/*` and requests them at runtime via `chrome.permissions.request`:
+  - Options requests the specific companion origin on save.
+  - The side panel requests broad page permissions before injecting the picker/extract scripts via `sendWithPermissionRetry`.
 
 ### HTML size guard
 
 Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid large requests and unexpected billing.
+
+### Picker selector heuristic
+
+- `picker.js` does not generate a guaranteed-unique selector.
+- On click it walks up to 10 ancestors, building segments of the form `tag#id`, `tag:nth-child(n)`, or `tag.class1.class2`, and stops as soon as it reaches an element with an `id`.
+- Trade-off: usually sufficient for hand-picked elements, but brittle on dynamically generated pages where the resulting selector may match multiple or zero elements.
 
 ---
 
@@ -221,16 +243,13 @@ Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid lar
   - The side panel stays open after conversion (no popup).
 
 - [x] No popup files
-  - The final version never used a popup; the toolbar opens the side panel directly, so there was nothing to delete.
+  - The final version never used a popup; the toolbar opens the side panel directly.
 
 - [x] Tests and linting
   - `tests/slug.test.js` covers `slugify` and a mirrored `inferFilename`. `npm test` (`node --test`), `npm run lint` (`eslint`), `npm run format` (`prettier`). No build step.
 
 - [x] Manual end-to-end verification
-  - Loaded unpacked in `chrome://extensions`: toolbar opens side panel, Options health-check, picker, single/multi-row flows, size-guard, download/save-as. (Plasmo prototype toolchain removed — see Deviations.)
-
-- [x] Cleanup
-  - `package.json` has no build/packaging metadata (only `echo` placeholders for `dev`/`build`/`package`); no Plasmo/`bpp`/`pnpm` traces remain in the repo.
+  - Loaded unpacked in `chrome://extensions` and verified end-to-end: toolbar opens side panel, Options health-check, picker, single/multi-row flows, size-guard, and download/save-as.
 
 ---
 
@@ -250,26 +269,6 @@ Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid lar
 ---
 
 ## Appendix — Example system/user prompts
-
-Deviations from the original plan
-
-During implementation, several details diverged from this plan (mostly driven by MV3 runtime constraints and by removing the Plasmo prototype toolchain). They are captured here so the doc matches the shipped code:
-
-- **Companion endpoints use an `/api` prefix.** The service worker calls `POST {baseUrl}/api/html-elements-to-markdown` and `GET {baseUrl}/api/companion-app-connection-test`; the Options "Test connection" button uses the same `GET {baseUrl}/api/companion-app-connection-test` endpoint. The original plan text omitted the `/api` segment from the Options page and connection-test description.
-- **Options "Test connection" endpoint mismatch (resolved).** `options.js` previously called `GET {baseUrl}/companion-app-connection-test` (no `/api`), so a green Options health check did not prove the conversion flow could reach the companion. This was reconciled so Options now uses the same `/api/companion-app-connection-test` path as the service worker (the authoritative flow).
-- **Content scripts are injected on demand, not declared in the manifest.** `extract.js` and `picker.js` are loaded via `chrome.scripting.executeScript({ files: [...] })`, so there is no `content_scripts` key in `manifest.json`. This avoids running them on every page.
-- **Host permissions are broadened and requested at runtime.** The manifest grants `host_permissions` for `http://localhost/*` and `http://127.0.0.1/*` plus `optional_host_permissions` for `http://*/*` and `https://*/*`. The Options page requests the specific companion origin on save; the side panel requests broad page permissions before injecting the picker/extract scripts (`sendWithPermissionRetry`).
-- **Service-worker keep-alive heartbeat.** MV3 workers are killed after ~30s of inactivity; a pending `fetch` does not count as activity. The service worker writes to `chrome.storage.local` every 20s while awaiting the companion response to stay alive.
-- **No "model preference" in Options.** The LLM model is chosen by the companion app; the extension only sends HTML. (The plan listed an optional model preference; it was dropped.)
-- **`inferFilename` is not a shared module.** It lives inside the side-panel IIFE and is mirrored in `tests/slug.test.js`. The test comment flags extracting it to e.g. `src/core/filename.js` as the canonical fix.
-- **`lastFilename` removed from storage.** `storage.js` previously persisted a vestigial `lastFilename` to `chrome.storage.local` that the UI never read or wrote (the side panel always infers the filename from the tab title); it has been removed, so `storage.js` now only uses `chrome.storage.sync` for `companionBaseUrl`.
-- **Messaging uses both `chrome.runtime.onMessage` and a long-lived port.** Tab resolution (`resolve-tab`), permission checks (`check-permission`), picker injection (`inject-picker`) and selector validation (`validate-selector`) travel over `onMessage`; the convert flow uses a port named `html-markdown-convert` that streams `connection` / `extraction` / `upload` / `done` / `error` steps. Picker selections are sent from the content script straight to the side panel via `chrome.runtime.sendMessage`.
-- **No build step.** The repo has no bundler (the Plasmo prototype toolchain was removed); `package.json` scripts are `echo` placeholders for `dev`/`build`/`package`. Real tooling is `node --test` (tests), `eslint` (lint), and `prettier` (format).
-- **Picker builds a custom heuristic selector.** Rather than a guaranteed-unique selector, `picker.js` walks up to 10 ancestors building `tag#id` / `tag:nth-child(n)` / `tag.class1.class2` segments, stopping at an `id`. This is usually sufficient but can be brittle on dynamically generated pages.
-
----
-
-##
 
 **System prompt**
 
