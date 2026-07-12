@@ -20,7 +20,6 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
 
 # local env files
 .env*
@@ -28,12 +27,6 @@ yarn-error.log*
 out/
 build/
 dist/
-
-# plasmo - https://www.plasmo.com
-.plasmo
-
-# bpp - http://bpp.browser.market/
-keys.json
 
 # typescript
 .tsbuildinfo

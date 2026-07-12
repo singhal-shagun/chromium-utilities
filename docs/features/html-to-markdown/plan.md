@@ -16,7 +16,7 @@ Provide an MV3 Chrome extension feature that collects selected parts of a web pa
 2. Each non-empty selector is validated via `chrome.scripting.executeScript` and must match exactly one element; invalid rows show errors and block conversion.
 3. Concatenated HTML larger than 200 KB aborts with a clear error.
 4. The extension performs a pre-flight health check on the companion app; if unreachable, it aborts and notifies the user via a Toast notification.
-5. The extension POSTs the concatenated HTML to a companion app (default companion endpoint: `http://localhost:3000/html-elements-to-markdown`) and downloads the returned ZIP archive (containing Markdown and assets) as a `.zip` file.
+5. The extension POSTs the concatenated HTML (as JSON `{ "html": "<concatenated>" }`) to a companion app (endpoint: `POST {baseUrl}/api/html-elements-to-markdown`) and downloads the returned ZIP archive (containing Markdown and assets) as a `.zip` file.
 6. All final status updates (Success/Error) are delivered via `chrome.notifications` (Toast notifications) to ensure visibility even if the side panel is closed.
 7. Options page allows configuring the companion app's URL with a "Test connection" functionality for a small health check request to the companion app.
 8. Clicking the extension toolbar icon opens the side panel directly (`chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`).
@@ -32,8 +32,8 @@ Provide an MV3 Chrome extension feature that collects selected parts of a web pa
 - Row actions: select another element, edit selector, delete selector
 - Extraction via injected `extractBySelector` executed in the active tab
 - 200 KB HTML size guard
-- Pre-flight health check (`GET /companion-app-connection-test`) before starting extraction
-- Send concatenated HTML to companion app (default companion endpoint: `http://localhost:3000/html-elements-to-markdown`) and download the returned ZIP archive
+- Pre-flight health check (`GET {baseUrl}/api/companion-app-connection-test`, performed by the service worker) before starting extraction
+- Send concatenated HTML to companion app (`POST {baseUrl}/api/html-elements-to-markdown`) and download the returned ZIP archive
 - Download as `.zip` using `chrome.downloads.download({saveAs: true})` via the background service worker
 - Status notifications via `chrome.notifications` (Toasts) for success and error states
 - Toolbar icon opens side panel directly (no popup intermediary)
@@ -50,11 +50,12 @@ Provide an MV3 Chrome extension feature that collects selected parts of a web pa
 High-level modules:
 
 - `src/background/service-worker.js` — Orchestrator: handles pre-flight, extraction, API POST, and downloads; also sets `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })` on startup
-- `src/core/storage.js` — get/save settings; split sync/local storage
-- `src/core/slug.js` — `slugify(text)` utility
-- `src/core/extract.js` — injected `extractBySelector(selector)` executed in page context
-- `src/app/options/*` — settings UI (companion `baseUrl`, optional model preference, test connection)
-- `src/app/sidepanel/*` — selector rows, validation, LLM call, download (replaces the old popup; stays open while interacting with the page)
+- `src/core/storage.js` — get/save settings; `companionBaseUrl` in `chrome.storage.sync`, `lastFilename` in `chrome.storage.local` (currently unused by the UI)
+- `src/core/slug.js` — `slugify(text)` utility (UMD-style global so the side panel can load it without a bundler)
+- `src/content-scripts/extract.js` — injected on demand (no `content_scripts` manifest entry); attaches `extractBySelector(selector)` to `window.__HTML_TO_MD_EXTRACT`, returns `{ok, count, html, error}`
+- `src/content-scripts/picker.js` — injected on demand; renders a hover overlay and sends the captured selector to the side panel via `chrome.runtime.sendMessage({ type: "html-markdown-picker-selection", selector })`
+- `src/app/options/*` — settings UI: companion `baseUrl` + "Test connection" health check. No "model preference" field — the LLM model is chosen by the companion app, not the extension.
+- `src/app/sidepanel/*` — selector rows, validation, picker trigger, download; uses `chrome.runtime.onMessage` (tab resolve, permission check, picker injection, selector validation) plus a long-lived port (`html-markdown-convert`) for the convert flow; stays open while interacting with the page
 
 ### End-to-End Conversion Flow (Sequence Diagram)
 
@@ -70,7 +71,7 @@ sequenceDiagram
 
   U->>S: Click Convert
   S->>B: Port message {selectors, filename}
-  B->>B: Check Permissions (downloads, etc.)
+  B->>B: Checkapi/ Permissions (downloads, etc.)
   B->>C: GET /companion-app-connection-test (Pre-flight)
   alt Companion Unreachable / Permission Denied
     C-->>B: Error / Timeout
@@ -89,7 +90,7 @@ sequenceDiagram
     else Extraction OK
         B-->>S: Port message {step: "extraction", status: "success"}
         S->>U: Show green check for Extraction
-        B->>C: POST /html-elements-to-markdown (Async Request)
+        B->>C: POST /api/html-elements-to-markdown (Async Request)
         C-->>B: Request Accepted (202/200)
         B-->>S: Port message {step: "upload", status: "success"}
         S->>U: Show green check for Upload
@@ -148,7 +149,7 @@ The extension uses `chrome.sidePanel` instead of `action.default_popup`. Clickin
 
 ### Filename inference and editability
 
-The side panel pre-fills the filename by inferring it from the active tab title using `slugify(tab.title) + '.md'`. The filename is editable in the side panel; edits are ephemeral (not stored in Options) and used for the current download. There is intentionally no global "default filename" stored in Options.
+The side panel pre-fills the filename by inferring it from the active tab title using `slugify(tab.title) + '.md'`. The filename is editable in the side panel and used (minus its extension) as the base name for the downloaded `<name>.zip`. `inferFilename()` lives inside the side panel IIFE (and is mirrored in `tests/slug.test.js` because it is not yet extracted into a shared module). `storage.js` defines a `lastFilename` field persisted to `chrome.storage.local`, but the side panel currently never writes or reads it, so the filename is effectively ephemeral per session — there is no global default filename honoured by the UI.
 
 ### Selector strictness
 
@@ -156,13 +157,14 @@ Each selector must match exactly one element. This simplifies author expectation
 
 ### Storage split
 
-The extension stores the companion app `baseUrl` in `chrome.storage.sync` so settings can sync across the user's Chrome instances.
+The extension stores the companion app `baseUrl` in `chrome.storage.sync` so settings can sync across the user's Chrome instances. `lastFilename` is kept in `chrome.storage.local` (see above note on its current non-use).
 
 ### Companion-app integration
 
-- Conversion is performed by the user's companion application at the configured `baseUrl` (default `http://localhost:3000`). The background worker POSTs the concatenated HTML to the companion endpoint `POST /html-elements-to-markdown` and expects a ZIP archive containing the Markdown and assets in response. This bypasses cross-origin restrictions with remote LLMs and delegates credential and remote-API management to the local app.
-- The Options page will use `GET /companion-app-connection-test` on the configured host to verify reachability.
-| `src/background/service-worker.js` | **to be added** | Orchestrator: handles pre-flight health checks, communication between popup and content scripts, performs API POST to companion app, triggers ZIP download, and sends system notifications
+- Conversion is performed by the user's companion application at the configured `baseUrl` (default `http://localhost:3000`). The background worker POSTs the concatenated HTML (as JSON `{ "html": "<concatenated>" }`) to the companion endpoint `POST {baseUrl}/api/html-elements-to-markdown` and expects a ZIP archive containing the Markdown and assets in response. This bypasses cross-origin restrictions with remote LLMs and delegates credential and remote-API management to the local app.
+- The service worker runs the pre-flight health check with `GET {baseUrl}/api/companion-app-connection-test` (5s `AbortSignal.timeout`) before extraction.
+- **Known inconsistency:** the Options page "Test connection" calls `GET {baseUrl}/companion-app-connection-test` (without the `/api` prefix), so a successful Options health check does not guarantee the conversion flow can reach the companion.
+- `host_permissions` in the manifest cover `http://localhost/*` and `http://127.0.0.1/*`. For non-local companion URLs (and to inject/extract on the visited page) the extension also declares `optional_host_permissions` for `http://*/*` and `https://*/*` and requests them at runtime via `chrome.permissions.request` (Options requests the specific companion origin on save; the side panel requests broad page permissions before injecting the picker/extract scripts).
 
 ### HTML size guard
 
@@ -174,63 +176,61 @@ Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid lar
 
 | Path | Change | Note |
 |------|--------|------|
-| `manifest.json` | **exists** | Extension manifest at repo root; ensure MV3 permissions include `activeTab`, `scripting`, `storage`, `downloads` and `host_permissions` for the companion app. |
-| `src/background/service-worker.js` | **to be added** | Orchestrator: handles communication between popup and content scripts, performs API POST to companion app, triggers ZIP download, and sends system notifications |
-| `src/core/storage.js` | **to be added** | Settings helper: persist companion `baseUrl` and optional preferences; split `chrome.storage.sync` for non-sensitive settings. |
-| `src/core/slug.js` | **to be added** | `slugify(text)` used to infer a safe filename from tab title. |
-| `src/content-scripts/extract.js` | **to be added** | Content script injected into the page that implements `extractBySelector(selector)` and returns `{ok,count,html,error}`. |
-| `src/app/options/options.html` | **to be added** | Options page markup for configuring the companion `baseUrl` and running the health-check. |
-| `src/app/options/options.js` | **to be added** | Options page logic: save settings to `chrome.storage.sync` and call `GET /companion-app-connection-test` for validation. |
-| `src/app/sidepanel/sidepanel.html` | **exists** | Side panel markup: editable filename, dynamic selector rows, element-picker controls, Convert button, status area. |
-| `src/app/sidepanel/sidepanel.js` | **exists** | Side panel script: row CRUD, validation, trigger content-script picker, send conversion request to background worker, and handle status updates. |
+| `manifest.json` | **exists** | MV3 manifest; `action` (no popup), `side_panel`, `options_ui`, `background.service_worker`. Permissions: `activeTab`, `scripting`, `storage`, `downloads`, `notifications`, `sidePanel`. `host_permissions`: `http://localhost/*`, `http://127.0.0.1/*`; `optional_host_permissions`: `http://*/*`, `https://*/*`. No `content_scripts` key (picker/extract are injected on demand). |
+| `src/background/service-worker.js` | **exists** | Orchestrator. Handles `chrome.runtime.onMessage` (`resolve-tab`, `check-permission`, `inject-picker`, `validate-selector`) and a long-lived port `html-markdown-convert` for the convert flow. Implements pre-flight (`/api/companion-app-connection-test`), `executeScript` extraction, `POST /api/html-elements-to-markdown`, ZIP download, and `chrome.notifications`. Includes a 20s keep-alive heartbeat while awaiting the companion. |
+| `src/core/storage.js` | **exists** | Settings helper exposing `getSettings()` / `saveSettings()`. Persists `companionBaseUrl` to `chrome.storage.sync` and `lastFilename` to `chrome.storage.local` (the latter is currently unused by the UI). |
+| `src/core/slug.js` | **exists** | `slugify(text)` UMD-style helper (CommonJS + `window.slugify`). |
+| `src/content-scripts/extract.js` | **exists** | Injected on demand; attaches `extractBySelector(selector)` to `window.__HTML_TO_MD_EXTRACT`, returns `{ok, count, html, error}` using `outerHTML`. |
+| `src/content-scripts/picker.js` | **exists** | Injected on demand; hover overlay + click-to-capture; sends `{type: "html-markdown-picker-selection", selector}` (and `-cancelled` on Esc) to the side panel. |
+| `src/app/options/options.html` | **exists** | Options page markup: companion `baseUrl` input, Save, and Test connection. (No model-preference field.) |
+| `src/app/options/options.js` | **exists** | Saves `companionBaseUrl`; requests the companion origin permission on save; runs `GET {baseUrl}/companion-app-connection-test` for the health check (note: no `/api` prefix). |
+| `src/app/sidepanel/sidepanel.html` | **exists** | Side panel markup: filename input, dynamic selector rows, Add/Convert, three step indicators (Connection / Extraction / Upload & Download), status area. |
+| `src/app/sidepanel/sidepanel.js` | **exists** | Row CRUD + validation, picker trigger, `inferFilename()` (embedded), step UI, port-based convert flow. |
 | `src/app/sidepanel/sidepanel.css` | **exists** | Side panel styles (responsive, no fixed width). |
-| `src/app/popup/` | **removed** | Old popup files no longer referenced; toolbar icon opens side panel directly. |
-| `src/content-scripts/picker.js` | **to be added** | Content script that shows a hover overlay and captures a selector when the user picks an element; communicates selection back to the popup via `chrome.runtime` or `window.postMessage`. |
 
 ---
 
 ## Implementation Steps
 
-- [ ] Add/validate MV3 `manifest.json` at repo root
-  - Ensure `action` (no popup), `side_panel`, `options_page`, `content_scripts` (picker/extract) and permissions: `activeTab`, `scripting`, `storage`, `downloads`, `sidePanel`, and `host_permissions` (e.g., `http://localhost:3000/*`).
+- [x] Add/validate MV3 `manifest.json` at repo root
+  - `action` (no popup), `side_panel`, `options_ui`, `background.service_worker`. Permissions: `activeTab`, `scripting`, `storage`, `downloads`, `notifications`, `sidePanel`. `host_permissions`: `http://localhost/*`, `http://127.0.0.1/*`; `optional_host_permissions`: `http://*/*`, `https://*/*`. `picker.js`/`extract.js` are **injected on demand** (no `content_scripts` key).
 
-- [ ] Implement the conversion flow:
-  - Pre-flight health check $\rightarrow$ `executeScript` (extract) $\rightarrow$ `fetch` (POST to companion) $\rightarrow$ `chrome.downloads.download` (ZIP data URL).
-  - Integrate `chrome.notifications` for success and error toasts
-- [ ] Implement settings storage
-  - Create `src/core/storage.js` with `getSettings()` / `saveSettings()` that persists `companionBaseUrl` and preferences to `chrome.storage.sync`.
+- [x] Implement the conversion flow:
+  - Pre-flight `GET {baseUrl}/api/companion-app-connection-test` $\rightarrow$ `executeScript` (extract) $\rightarrow$ `fetch` `POST {baseUrl}/api/html-elements-to-markdown` $\rightarrow$ `chrome.downloads.download` (ZIP data URL).
+  - `chrome.notifications` for success/error toasts; a 20s keep-alive heartbeat keeps the MV3 worker alive while awaiting the companion.
 
-- [ ] Implement utility helpers
-  - Create `src/core/slug.js` with `slugify(text)` to generate safe filenames from tab titles.
+- [x] Implement settings storage
+  - `src/core/storage.js` with `getSettings()` / `saveSettings()`; `companionBaseUrl` to `chrome.storage.sync`, `lastFilename` to `chrome.storage.local` (currently unused).
 
-- [ ] Implement content scripts
-  - `src/content-scripts/extract.js`: expose `extractBySelector(selector)` returning `{ok, count, html?, error?}` (no extension APIs, pure page DOM). Designed for `chrome.scripting.executeScript`.
-  - `src/content-scripts/picker.js`: element-picker overlay that highlights elements on hover and sends a selector back to the side panel via `chrome.runtime.sendMessage`.
+- [x] Implement utility helpers
+  - `src/core/slug.js` with `slugify(text)`; UMD-style so it can be unit-tested under Node and loaded by the side panel.
 
-- [ ] Implement Background Service Worker
-  - Create `src/background/service-worker.js` to handle port messages from the side panel.
-  - Call `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })` on startup.
-  - Implement the flow: `executeScript` (extract) $\rightarrow$ `fetch` (POST to companion) $\rightarrow$ `chrome.downloads.download` (ZIP data URL).
+- [x] Implement content scripts (injected on demand)
+  - `src/content-scripts/extract.js`: attaches `extractBySelector(selector)` to `window.__HTML_TO_MD_EXTRACT`, returns `{ok, count, html, error}` from `outerHTML`.
+  - `src/content-scripts/picker.js`: hover overlay; on click builds a heuristic CSS selector and sends `chrome.runtime.sendMessage({ type: "html-markdown-picker-selection", selector })`.
 
-- [ ] Build Options page
-  - Add `src/app/options/options.html` + `src/app/options/options.js` to configure `companionBaseUrl` and run `GET /companion-app-connection-test` (show warning only on failure).
+- [x] Implement Background Service Worker
+  - `src/background/service-worker.js`: `chrome.runtime.onMessage` for `resolve-tab` / `check-permission` / `inject-picker` / `validate-selector`; a long-lived port `html-markdown-convert` for the convert flow.
+  - `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })` on startup (wrapped in try/catch).
 
-- [ ] Build Side Panel UI and wiring
-  - Add `src/app/sidepanel/sidepanel.html`, `sidepanel.css`, and `sidepanel.js` implementing: editable filename input, dynamic selector rows, Add/Remove/Edit row actions, element-picker integration, 200 KB size guard, and communication with the background worker.
-  - Implement "Step-by-Step Feedback" UI: display three status indicators (Connection, Extraction, Upload) that turn green on success or red on failure.
-  - The side panel stays open after conversion completes (unlike a popup which would close).
+- [x] Build Options page
+  - `src/app/options/options.html` + `options.js`: configure `companionBaseUrl`, request the companion origin permission on save, run `GET {baseUrl}/companion-app-connection-test` (note: no `/api` prefix — see Deviations). No model-preference field.
 
-- [ ] Remove old popup files
-  - Delete `src/app/popup/popup.html`, `src/app/popup/popup.js`, `src/app/popup/popup.css` (no longer referenced).
+- [x] Build Side Panel UI and wiring
+  - `src/app/sidepanel/*`: editable filename (`slugify(title)+'.md'`), dynamic selector rows (Add/Remove/Change), picker integration, 200 KB size guard, and three step indicators (Connection / Extraction / Upload & Download). `inferFilename()` is embedded in the side-panel IIFE.
+  - The side panel stays open after conversion (no popup).
 
-- [ ] Tests and linting
-  - Add small unit tests for `slugify` and `inferFilename` (node-runner) and run a basic static lint/format step.
+- [x] No popup files
+  - The final version never used a popup; the toolbar opens the side panel directly, so there was nothing to delete.
 
-- [ ] Manual end-to-end verification
-  - Load the unpacked extension in `chrome://extensions` and verify: toolbar icon opens side panel, Options health-check, picker, single-row and multi-row flows, size guard behavior, download/save-as.
+- [x] Tests and linting
+  - `tests/slug.test.js` covers `slugify` and a mirrored `inferFilename`. `npm test` (`node --test`), `npm run lint` (`eslint`), `npm run format` (`prettier`). No build step.
 
-- [ ] Cleanup
-  - Remove any placeholder `manifest` key from `package.json` and ensure packaging/build metadata is correct.
+- [x] Manual end-to-end verification
+  - Loaded unpacked in `chrome://extensions`: toolbar opens side panel, Options health-check, picker, single/multi-row flows, size-guard, download/save-as. (Plasmo prototype toolchain removed — see Deviations.)
+
+- [x] Cleanup
+  - `package.json` has no build/packaging metadata (only `echo` placeholders for `dev`/`build`/`package`); no Plasmo/`bpp`/`pnpm` traces remain in the repo.
 
 ---
 
@@ -242,7 +242,7 @@ Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid lar
 
 - What health-check endpoint should the companion app expose?
 
-  - Use: `GET /companion-app-connection-test` as the canonical health-check endpoint called by the Options page and the popup (as a lightweight reachability test).
+  - The service worker uses `GET {baseUrl}/api/companion-app-connection-test` for its pre-flight check. The Options page "Test connection" still calls `GET {baseUrl}/companion-app-connection-test` (no `/api` prefix) — a known inconsistency to reconcile (see Deviations).
 
 > [!TIP]
 > By using `host_permissions` in the manifest, the extension bypasses CORS restrictions when communicating with the companion app, simplifying the server-side configuration.
@@ -250,7 +250,25 @@ Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid lar
 ---
 
 ## Appendix — Example system/user prompts
+Deviations from the original plan
 
+During implementation, several details diverged from this plan (mostly driven by MV3 runtime constraints and by removing the Plasmo prototype toolchain). They are captured here so the doc matches the shipped code:
+
+- **Companion endpoints use an `/api` prefix.** The service worker calls `POST {baseUrl}/api/html-elements-to-markdown` and `GET {baseUrl}/api/companion-app-connection-test`. The plan (and the Options "Test connection" button) omit the `/api` segment.
+- **Options "Test connection" endpoint mismatch (known bug).** `options.js` calls `GET {baseUrl}/companion-app-connection-test` (no `/api`), so a green Options health check does not prove the conversion flow can reach the companion. The service worker is the authoritative path and uses `/api/...`.
+- **Content scripts are injected on demand, not declared in the manifest.** `extract.js` and `picker.js` are loaded via `chrome.scripting.executeScript({ files: [...] })`, so there is no `content_scripts` key in `manifest.json`. This avoids running them on every page.
+- **Host permissions are broadened and requested at runtime.** The manifest grants `host_permissions` for `http://localhost/*` and `http://127.0.0.1/*` plus `optional_host_permissions` for `http://*/*` and `https://*/*`. The Options page requests the specific companion origin on save; the side panel requests broad page permissions before injecting the picker/extract scripts (`sendWithPermissionRetry`).
+- **Service-worker keep-alive heartbeat.** MV3 workers are killed after ~30s of inactivity; a pending `fetch` does not count as activity. The service worker writes to `chrome.storage.local` every 20s while awaiting the companion response to stay alive.
+- **No "model preference" in Options.** The LLM model is chosen by the companion app; the extension only sends HTML. (The plan listed an optional model preference; it was dropped.)
+- **`inferFilename` is not a shared module.** It lives inside the side-panel IIFE and is mirrored in `tests/slug.test.js`. The test comment flags extracting it to e.g. `src/core/filename.js` as the canonical fix.
+- **`lastFilename` in storage is vestigial.** `storage.js` persists `lastFilename` to `chrome.storage.local`, but the UI never writes or reads it (the side panel always infers from the tab title), so it has no effect.
+- **Messaging uses both `chrome.runtime.onMessage` and a long-lived port.** Tab resolution (`resolve-tab`), permission checks (`check-permission`), picker injection (`inject-picker`) and selector validation (`validate-selector`) travel over `onMessage`; the convert flow uses a port named `html-markdown-convert` that streams `connection` / `extraction` / `upload` / `done` / `error` steps. Picker selections are sent from the content script straight to the side panel via `chrome.runtime.sendMessage`.
+- **No build step.** The repo has no bundler (the Plasmo prototype toolchain was removed); `package.json` scripts are `echo` placeholders for `dev`/`build`/`package`. Real tooling is `node --test` (tests), `eslint` (lint), and `prettier` (format).
+- **Picker builds a custom heuristic selector.** Rather than a guaranteed-unique selector, `picker.js` walks up to 10 ancestors building `tag#id` / `tag:nth-child(n)` / `tag.class1.class2` segments, stopping at an `id`. This is usually sufficient but can be brittle on dynamically generated pages.
+
+---
+
+## 
 **System prompt**
 
 > Convert the following HTML (a sequence of selected elements) to clean, semantic Markdown. Strip scripts, styles, ads, and navigation. Keep each element as a coherent section in the order presented. Output only the Markdown.
