@@ -1,41 +1,41 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HTML → Markdown Settings</title>
-    <link rel="stylesheet" href="options.css" />
-  </head>
-  <body>
-    <main class="options-shell">
-      <header>
-        <h1>Companion App</h1>
-        <p>
-          Configure where the extension should send HTML for Markdown
-          conversion.
-        </p>
-      </header>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>HTML → Markdown Settings</title>
+        <link rel="stylesheet" href="options.css" />
+    </head>
+    <body>
+        <main class="options-shell">
+            <header>
+                <h1>Companion App</h1>
+                <p>
+                    Configure where the extension should send HTML for Markdown
+                    conversion.
+                </p>
+            </header>
 
-      <section class="field-group">
-        <label for="companion-base-url">Companion base URL</label>
-        <input
-          id="companion-base-url"
-          name="companion-base-url"
-          type="url"
-          placeholder="http://localhost:3000" />
-      </section>
+            <section class="field-group">
+                <label for="companion-base-url">Companion base URL</label>
+                <input
+                    id="companion-base-url"
+                    name="companion-base-url"
+                    type="url"
+                    placeholder="http://localhost:3000" />
+            </section>
 
-      <section class="toolbar">
-        <button id="save-btn" type="button">Save</button>
-        <button id="test-btn" class="secondary" type="button">
-          Test connection
-        </button>
-      </section>
+            <section class="toolbar">
+                <button id="save-btn" type="button">Save</button>
+                <button id="test-btn" class="secondary" type="button">
+                    Test connection
+                </button>
+            </section>
 
-      <section id="status" class="status" aria-live="polite"></section>
-    </main>
+            <section id="status" class="status" aria-live="polite"></section>
+        </main>
 
-    <script src="../../core/storage.js"></script>
-    <script src="options.js"></script>
-  </body>
+        <script src="../../core/storage.js"></script>
+        <script src="options.js"></script>
+    </body>
 </html>

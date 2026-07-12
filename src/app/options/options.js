@@ -7,7 +7,8 @@
 
   async function loadSettings() {
     const settings = await HtmlMarkdownStorage.getSettings()
-    companionInput.value = settings.companionBaseUrl || "http://localhost:3000"
+    companionInput.value =
+      settings.companionBaseUrl || "http://localhost:3000"
   }
 
   async function saveSettings() {
@@ -30,7 +31,10 @@
           return
         }
       } catch (permError) {
-        setStatus(`Permission request failed: ${permError.message}`, "error")
+        setStatus(
+          `Permission request failed: ${permError.message}`,
+          "error"
+        )
         return
       }
     }
@@ -54,9 +58,12 @@
     setStatus("Testing companion app connection…", "info")
 
     try {
-      const response = await fetch(`${baseUrl}/companion-app-connection-test`, {
-        method: "GET"
-      })
+      const response = await fetch(
+        `${baseUrl.replace(/\/+$/, "")}/api/companion-app-connection-test`,
+        {
+          method: "GET"
+        }
+      )
       if (!response.ok) {
         throw new Error(`Health check returned ${response.status}`)
       }
@@ -72,7 +79,9 @@
   }
 
   document.getElementById("save-btn").addEventListener("click", saveSettings)
-  document.getElementById("test-btn").addEventListener("click", testConnection)
+  document
+    .getElementById("test-btn")
+    .addEventListener("click", testConnection)
 
   loadSettings().catch((error) => {
     setStatus(`Unable to load settings: ${error.message}`, "error")

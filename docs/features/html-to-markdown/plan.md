@@ -72,7 +72,7 @@ sequenceDiagram
   U->>S: Click Convert
   S->>B: Port message {selectors, filename}
   B->>B: Checkapi/ Permissions (downloads, etc.)
-  B->>C: GET /companion-app-connection-test (Pre-flight)
+  B->>C: GET /api/companion-app-connection-test (Pre-flight)
   alt Companion Unreachable / Permission Denied
     C-->>B: Error / Timeout
     B-->>S: Port message {step: "error", message: "..."}
@@ -163,7 +163,7 @@ The extension stores the companion app `baseUrl` in `chrome.storage.sync` so set
 
 - Conversion is performed by the user's companion application at the configured `baseUrl` (default `http://localhost:3000`). The background worker POSTs the concatenated HTML (as JSON `{ "html": "<concatenated>" }`) to the companion endpoint `POST {baseUrl}/api/html-elements-to-markdown` and expects a ZIP archive containing the Markdown and assets in response. This bypasses cross-origin restrictions with remote LLMs and delegates credential and remote-API management to the local app.
 - The service worker runs the pre-flight health check with `GET {baseUrl}/api/companion-app-connection-test` (5s `AbortSignal.timeout`) before extraction.
-- **Known inconsistency:** the Options page "Test connection" calls `GET {baseUrl}/companion-app-connection-test` (without the `/api` prefix), so a successful Options health check does not guarantee the conversion flow can reach the companion.
+- The Options page "Test connection" button runs the same `GET {baseUrl}/api/companion-app-connection-test` health check, so a green Options check now confirms the conversion flow can reach the companion.
 - `host_permissions` in the manifest cover `http://localhost/*` and `http://127.0.0.1/*`. For non-local companion URLs (and to inject/extract on the visited page) the extension also declares `optional_host_permissions` for `http://*/*` and `https://*/*` and requests them at runtime via `chrome.permissions.request` (Options requests the specific companion origin on save; the side panel requests broad page permissions before injecting the picker/extract scripts).
 
 ### HTML size guard
@@ -183,7 +183,7 @@ Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid lar
 | `src/content-scripts/extract.js` | **exists** | Injected on demand; attaches `extractBySelector(selector)` to `window.__HTML_TO_MD_EXTRACT`, returns `{ok, count, html, error}` using `outerHTML`. |
 | `src/content-scripts/picker.js` | **exists** | Injected on demand; hover overlay + click-to-capture; sends `{type: "html-markdown-picker-selection", selector}` (and `-cancelled` on Esc) to the side panel. |
 | `src/app/options/options.html` | **exists** | Options page markup: companion `baseUrl` input, Save, and Test connection. (No model-preference field.) |
-| `src/app/options/options.js` | **exists** | Saves `companionBaseUrl`; requests the companion origin permission on save; runs `GET {baseUrl}/companion-app-connection-test` for the health check (note: no `/api` prefix). |
+| `src/app/options/options.js` | **exists** | Saves `companionBaseUrl`; requests the companion origin permission on save; runs `GET {baseUrl}/api/companion-app-connection-test` for the health check (matching the service-worker pre-flight). |
 | `src/app/sidepanel/sidepanel.html` | **exists** | Side panel markup: filename input, dynamic selector rows, Add/Convert, three step indicators (Connection / Extraction / Upload & Download), status area. |
 | `src/app/sidepanel/sidepanel.js` | **exists** | Row CRUD + validation, picker trigger, `inferFilename()` (embedded), step UI, port-based convert flow. |
 | `src/app/sidepanel/sidepanel.css` | **exists** | Side panel styles (responsive, no fixed width). |
@@ -214,7 +214,7 @@ Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid lar
   - `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })` on startup (wrapped in try/catch).
 
 - [x] Build Options page
-  - `src/app/options/options.html` + `options.js`: configure `companionBaseUrl`, request the companion origin permission on save, run `GET {baseUrl}/companion-app-connection-test` (note: no `/api` prefix — see Deviations). No model-preference field.
+  - `src/app/options/options.html` + `options.js`: configure `companionBaseUrl`, request the companion origin permission on save, run `GET {baseUrl}/api/companion-app-connection-test` (matching the service-worker pre-flight). No model-preference field.
 
 - [x] Build Side Panel UI and wiring
   - `src/app/sidepanel/*`: editable filename (`slugify(title)+'.md'`), dynamic selector rows (Add/Remove/Change), picker integration, 200 KB size guard, and three step indicators (Connection / Extraction / Upload & Download). `inferFilename()` is embedded in the side-panel IIFE.
@@ -242,7 +242,7 @@ Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid lar
 
 - What health-check endpoint should the companion app expose?
 
-  - The service worker uses `GET {baseUrl}/api/companion-app-connection-test` for its pre-flight check. The Options page "Test connection" still calls `GET {baseUrl}/companion-app-connection-test` (no `/api` prefix) — a known inconsistency to reconcile (see Deviations).
+  - The service worker uses `GET {baseUrl}/api/companion-app-connection-test` for its pre-flight check. The Options page "Test connection" now calls the same `GET {baseUrl}/api/companion-app-connection-test` endpoint, so a green Options health check confirms the conversion flow can reach the companion.
 
 > [!TIP]
 > By using `host_permissions` in the manifest, the extension bypasses CORS restrictions when communicating with the companion app, simplifying the server-side configuration.
@@ -250,12 +250,13 @@ Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid lar
 ---
 
 ## Appendix — Example system/user prompts
+
 Deviations from the original plan
 
 During implementation, several details diverged from this plan (mostly driven by MV3 runtime constraints and by removing the Plasmo prototype toolchain). They are captured here so the doc matches the shipped code:
 
-- **Companion endpoints use an `/api` prefix.** The service worker calls `POST {baseUrl}/api/html-elements-to-markdown` and `GET {baseUrl}/api/companion-app-connection-test`. The plan (and the Options "Test connection" button) omit the `/api` segment.
-- **Options "Test connection" endpoint mismatch (known bug).** `options.js` calls `GET {baseUrl}/companion-app-connection-test` (no `/api`), so a green Options health check does not prove the conversion flow can reach the companion. The service worker is the authoritative path and uses `/api/...`.
+- **Companion endpoints use an `/api` prefix.** The service worker calls `POST {baseUrl}/api/html-elements-to-markdown` and `GET {baseUrl}/api/companion-app-connection-test`; the Options "Test connection" button uses the same `GET {baseUrl}/api/companion-app-connection-test` endpoint. The original plan text omitted the `/api` segment from the Options page and connection-test description.
+- **Options "Test connection" endpoint mismatch (resolved).** `options.js` previously called `GET {baseUrl}/companion-app-connection-test` (no `/api`), so a green Options health check did not prove the conversion flow could reach the companion. This was reconciled so Options now uses the same `/api/companion-app-connection-test` path as the service worker (the authoritative flow).
 - **Content scripts are injected on demand, not declared in the manifest.** `extract.js` and `picker.js` are loaded via `chrome.scripting.executeScript({ files: [...] })`, so there is no `content_scripts` key in `manifest.json`. This avoids running them on every page.
 - **Host permissions are broadened and requested at runtime.** The manifest grants `host_permissions` for `http://localhost/*` and `http://127.0.0.1/*` plus `optional_host_permissions` for `http://*/*` and `https://*/*`. The Options page requests the specific companion origin on save; the side panel requests broad page permissions before injecting the picker/extract scripts (`sendWithPermissionRetry`).
 - **Service-worker keep-alive heartbeat.** MV3 workers are killed after ~30s of inactivity; a pending `fetch` does not count as activity. The service worker writes to `chrome.storage.local` every 20s while awaiting the companion response to stay alive.
@@ -268,7 +269,8 @@ During implementation, several details diverged from this plan (mostly driven by
 
 ---
 
-## 
+##
+
 **System prompt**
 
 > Convert the following HTML (a sequence of selected elements) to clean, semantic Markdown. Strip scripts, styles, ads, and navigation. Keep each element as a coherent section in the order presented. Output only the Markdown.

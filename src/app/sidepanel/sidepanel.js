@@ -1,4 +1,4 @@
-; (function () {
+;(function () {
     "use strict"
 
     const state = {
@@ -61,8 +61,9 @@
 
     function inferFilename(title) {
         const slug =
-            (typeof slugify === "function" ? slugify(title) : basicSlugify(title)) ||
-            "page"
+            (typeof slugify === "function"
+                ? slugify(title)
+                : basicSlugify(title)) || "page"
         return slug + ".md"
     }
 
@@ -90,13 +91,14 @@
     `
 
         row.querySelector(".selector-input").addEventListener("input", () => {
-            row.querySelector(".row-status").textContent = "Waiting for validation."
+            row.querySelector(".row-status").textContent =
+                "Waiting for validation."
             row.querySelector(".row-status").className = "row-status"
         })
 
-        row
-            .querySelector(".pick-btn")
-            .addEventListener("click", () => pickElementForRow(row))
+        row.querySelector(".pick-btn").addEventListener("click", () =>
+            pickElementForRow(row)
+        )
         row.querySelector(".remove-btn").addEventListener("click", () => {
             if ($("#rows").children.length > 1) {
                 row.remove()
@@ -123,9 +125,9 @@
     // ─── Element picker ─────────────────────────────────────────────
 
     /**
-       * Request optional host permissions for all http/https pages.
-       * Returns true if granted, false otherwise.
-       */
+     * Request optional host permissions for all http/https pages.
+     * Returns true if granted, false otherwise.
+     */
     async function requestHostPermission() {
         try {
             return await chrome.permissions.request({
@@ -183,8 +185,7 @@
     function handlePickerSelection(message) {
         if (message && message.type === "html-markdown-picker-selection") {
             if (state.activePickerRow) {
-                const pickBtn =
-                    state.activePickerRow.querySelector(".pick-btn")
+                const pickBtn = state.activePickerRow.querySelector(".pick-btn")
                 pickBtn.textContent = "Change element"
 
                 const selectorInput =
@@ -196,12 +197,14 @@
                     "row-status success"
             }
             state.activePickerRow = null
-            setStatus("Selector captured. Validate it before converting.", "success")
+            setStatus(
+                "Selector captured. Validate it before converting.",
+                "success"
+            )
         }
         if (message && message.type === "html-markdown-picker-cancelled") {
             if (state.activePickerRow) {
-                const pickBtn =
-                    state.activePickerRow.querySelector(".pick-btn")
+                const pickBtn = state.activePickerRow.querySelector(".pick-btn")
                 pickBtn.textContent = "Pick element"
             }
             state.activePickerRow = null
@@ -279,7 +282,10 @@
         try {
             port = chrome.runtime.connect({ name: "html-markdown-convert" })
         } catch (connError) {
-            setStatus(`Failed to connect to extension:\n${fmtErr(connError)}`, "error")
+            setStatus(
+                `Failed to connect to extension:\n${fmtErr(connError)}`,
+                "error"
+            )
             setConverting(false)
             return
         }
@@ -289,12 +295,18 @@
             switch (msg.step) {
                 case "connection":
                     updateStep("connection", msg.status === "success")
-                    setStatus("Companion app reachable. Extracting elements…", "info")
+                    setStatus(
+                        "Companion app reachable. Extracting elements…",
+                        "info"
+                    )
                     break
 
                 case "extraction":
                     updateStep("extraction", msg.status === "success")
-                    setStatus("Elements extracted. Sending to companion app…", "info")
+                    setStatus(
+                        "Elements extracted. Sending to companion app…",
+                        "info"
+                    )
                     break
 
                 case "upload":
