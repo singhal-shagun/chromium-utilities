@@ -50,7 +50,7 @@ Provide an MV3 Chrome extension feature that collects selected parts of a web pa
 High-level modules:
 
 - `src/background/service-worker.js` — Orchestrator: handles pre-flight, extraction, API POST, and downloads; also sets `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })` on startup
-- `src/core/storage.js` — get/save settings; `companionBaseUrl` in `chrome.storage.sync`, `lastFilename` in `chrome.storage.local` (currently unused by the UI)
+- `src/core/storage.js` — get/save settings; `companionBaseUrl` in `chrome.storage.sync`
 - `src/core/slug.js` — `slugify(text)` utility (UMD-style global so the side panel can load it without a bundler)
 - `src/content-scripts/extract.js` — injected on demand (no `content_scripts` manifest entry); attaches `extractBySelector(selector)` to `window.__HTML_TO_MD_EXTRACT`, returns `{ok, count, html, error}`
 - `src/content-scripts/picker.js` — injected on demand; renders a hover overlay and sends the captured selector to the side panel via `chrome.runtime.sendMessage({ type: "html-markdown-picker-selection", selector })`
@@ -149,7 +149,7 @@ The extension uses `chrome.sidePanel` instead of `action.default_popup`. Clickin
 
 ### Filename inference and editability
 
-The side panel pre-fills the filename by inferring it from the active tab title using `slugify(tab.title) + '.md'`. The filename is editable in the side panel and used (minus its extension) as the base name for the downloaded `<name>.zip`. `inferFilename()` lives inside the side panel IIFE (and is mirrored in `tests/slug.test.js` because it is not yet extracted into a shared module). `storage.js` defines a `lastFilename` field persisted to `chrome.storage.local`, but the side panel currently never writes or reads it, so the filename is effectively ephemeral per session — there is no global default filename honoured by the UI.
+The side panel pre-fills the filename by inferring it from the active tab title using `slugify(tab.title) + '.md'`. The filename is editable in the side panel and used (minus its extension) as the base name for the downloaded `<name>.zip`. `inferFilename()` lives inside the side panel IIFE (and is mirrored in `tests/slug.test.js` because it is not yet extracted into a shared module). The filename is effectively ephemeral per session — there is no global default filename persisted to storage.
 
 ### Selector strictness
 
@@ -157,7 +157,7 @@ Each selector must match exactly one element. This simplifies author expectation
 
 ### Storage split
 
-The extension stores the companion app `baseUrl` in `chrome.storage.sync` so settings can sync across the user's Chrome instances. `lastFilename` is kept in `chrome.storage.local` (see above note on its current non-use).
+The extension stores the companion app `baseUrl` in `chrome.storage.sync` so settings can sync across the user's Chrome instances.
 
 ### Companion-app integration
 
@@ -178,7 +178,7 @@ Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid lar
 |------|--------|------|
 | `manifest.json` | **exists** | MV3 manifest; `action` (no popup), `side_panel`, `options_ui`, `background.service_worker`. Permissions: `activeTab`, `scripting`, `storage`, `downloads`, `notifications`, `sidePanel`. `host_permissions`: `http://localhost/*`, `http://127.0.0.1/*`; `optional_host_permissions`: `http://*/*`, `https://*/*`. No `content_scripts` key (picker/extract are injected on demand). |
 | `src/background/service-worker.js` | **exists** | Orchestrator. Handles `chrome.runtime.onMessage` (`resolve-tab`, `check-permission`, `inject-picker`, `validate-selector`) and a long-lived port `html-markdown-convert` for the convert flow. Implements pre-flight (`/api/companion-app-connection-test`), `executeScript` extraction, `POST /api/html-elements-to-markdown`, ZIP download, and `chrome.notifications`. Includes a 20s keep-alive heartbeat while awaiting the companion. |
-| `src/core/storage.js` | **exists** | Settings helper exposing `getSettings()` / `saveSettings()`. Persists `companionBaseUrl` to `chrome.storage.sync` and `lastFilename` to `chrome.storage.local` (the latter is currently unused by the UI). |
+| `src/core/storage.js` | **exists** | Settings helper exposing `getSettings()` / `saveSettings()`. Persists `companionBaseUrl` to `chrome.storage.sync`. |
 | `src/core/slug.js` | **exists** | `slugify(text)` UMD-style helper (CommonJS + `window.slugify`). |
 | `src/content-scripts/extract.js` | **exists** | Injected on demand; attaches `extractBySelector(selector)` to `window.__HTML_TO_MD_EXTRACT`, returns `{ok, count, html, error}` using `outerHTML`. |
 | `src/content-scripts/picker.js` | **exists** | Injected on demand; hover overlay + click-to-capture; sends `{type: "html-markdown-picker-selection", selector}` (and `-cancelled` on Esc) to the side panel. |
@@ -200,7 +200,7 @@ Abort conversion if concatenated outerHTML exceeds 200 * 1024 bytes to avoid lar
   - `chrome.notifications` for success/error toasts; a 20s keep-alive heartbeat keeps the MV3 worker alive while awaiting the companion.
 
 - [x] Implement settings storage
-  - `src/core/storage.js` with `getSettings()` / `saveSettings()`; `companionBaseUrl` to `chrome.storage.sync`, `lastFilename` to `chrome.storage.local` (currently unused).
+  - `src/core/storage.js` with `getSettings()` / `saveSettings()`; `companionBaseUrl` to `chrome.storage.sync`.
 
 - [x] Implement utility helpers
   - `src/core/slug.js` with `slugify(text)`; UMD-style so it can be unit-tested under Node and loaded by the side panel.
@@ -262,7 +262,7 @@ During implementation, several details diverged from this plan (mostly driven by
 - **Service-worker keep-alive heartbeat.** MV3 workers are killed after ~30s of inactivity; a pending `fetch` does not count as activity. The service worker writes to `chrome.storage.local` every 20s while awaiting the companion response to stay alive.
 - **No "model preference" in Options.** The LLM model is chosen by the companion app; the extension only sends HTML. (The plan listed an optional model preference; it was dropped.)
 - **`inferFilename` is not a shared module.** It lives inside the side-panel IIFE and is mirrored in `tests/slug.test.js`. The test comment flags extracting it to e.g. `src/core/filename.js` as the canonical fix.
-- **`lastFilename` in storage is vestigial.** `storage.js` persists `lastFilename` to `chrome.storage.local`, but the UI never writes or reads it (the side panel always infers from the tab title), so it has no effect.
+- **`lastFilename` removed from storage.** `storage.js` previously persisted a vestigial `lastFilename` to `chrome.storage.local` that the UI never read or wrote (the side panel always infers the filename from the tab title); it has been removed, so `storage.js` now only uses `chrome.storage.sync` for `companionBaseUrl`.
 - **Messaging uses both `chrome.runtime.onMessage` and a long-lived port.** Tab resolution (`resolve-tab`), permission checks (`check-permission`), picker injection (`inject-picker`) and selector validation (`validate-selector`) travel over `onMessage`; the convert flow uses a port named `html-markdown-convert` that streams `connection` / `extraction` / `upload` / `done` / `error` steps. Picker selections are sent from the content script straight to the side panel via `chrome.runtime.sendMessage`.
 - **No build step.** The repo has no bundler (the Plasmo prototype toolchain was removed); `package.json` scripts are `echo` placeholders for `dev`/`build`/`package`. Real tooling is `node --test` (tests), `eslint` (lint), and `prettier` (format).
 - **Picker builds a custom heuristic selector.** Rather than a guaranteed-unique selector, `picker.js` walks up to 10 ancestors building `tag#id` / `tag:nth-child(n)` / `tag.class1.class2` segments, stopping at an `id`. This is usually sufficient but can be brittle on dynamically generated pages.

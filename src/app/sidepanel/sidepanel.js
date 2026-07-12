@@ -5,6 +5,7 @@
         settings: null,
         activeTabId: null,
         activeTabTitle: "page",
+        activeTabUrl: "",
         activePickerRow: null
     }
 
@@ -49,6 +50,7 @@
             const tab = await resolveTab()
             state.activeTabId = tab.tabId
             state.activeTabTitle = tab.title || "page"
+            state.activeTabUrl = tab.url || ""
             $("#filename").value = inferFilename(state.activeTabTitle)
             addRow()
             setStatus("Ready. Add selectors and click Convert.", "info")
@@ -164,6 +166,7 @@
             const tab = await resolveTab()
             state.activeTabId = tab.tabId
             state.activeTabTitle = tab.title || "page"
+            state.activeTabUrl = tab.url || ""
 
             const resp = await sendWithPermissionRetry({
                 type: "inject-picker",
@@ -219,6 +222,7 @@
             const tab = await resolveTab()
             state.activeTabId = tab.tabId
             state.activeTabTitle = tab.title || "page"
+            state.activeTabUrl = tab.url || ""
 
             // Check permission before starting the full convert flow
             const permCheck = await sendWithPermissionRetry({
@@ -346,7 +350,8 @@
             type: "start-convert",
             selectors: selectorValues,
             filename: filename,
-            tabId: state.activeTabId
+            tabId: state.activeTabId,
+            url: state.activeTabUrl
         })
     }
 

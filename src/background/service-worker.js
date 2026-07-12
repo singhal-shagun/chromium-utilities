@@ -123,7 +123,7 @@
 
     // ─── POST to companion ──────────────────────────────────────────
 
-    async function postHtmlAndGetZip(baseUrl, concatenatedHtml) {
+    async function postHtmlAndGetZip(baseUrl, concatenatedHtml, pageUrl) {
         const url = `${baseUrl.replace(/\/+$/, "")}/api/html-elements-to-markdown`
         // Keep the service worker alive across a slow companion response.
         const heartbeat = createHeartbeat()
@@ -132,7 +132,9 @@
             const response = await fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json; charset=utf-8" },
-                body: JSON.stringify({ html: concatenatedHtml })
+                // Send the source page URL so the companion can resolve relative
+                // <img> src attributes (e.g. `/assets/...`) to their real origin.
+                body: JSON.stringify({ html: concatenatedHtml, url: pageUrl || null })
             })
             if (!response.ok) {
                 let detail = ""
@@ -232,7 +234,10 @@
                     if (tabs.length > 0) {
                         sendResponse({
                             tabId: tabs[0].id,
-                            title: tabs[0].title || "page"
+                            title: tabs[0].title || "page",
+                            // `url` is available here under the same activeTab /
+                            // host-permission gating that already gives us `title`.
+                            url: tabs[0].url
                         })
                     } else {
                         sendResponse({ error: "No active tab found." })
@@ -321,7 +326,7 @@
                 return
             }
 
-            const { selectors, filename, tabId } = msg
+            const { selectors, filename, tabId, url } = msg
 
             try {
                 // ── Step 1: Pre-flight health check ────────────────────────
@@ -348,9 +353,26 @@
                 port.postMessage({ step: "extraction", status: "success" })
 
                 // ── Step 3: Upload & Download ──────────────────────────────
+                // Determine the source page URL so the companion can resolve
+                // relative asset URLs (e.g. `/assets/...`) against the real
+                // origin. Prefer the URL the side panel captured at resolve-tab
+                // time (msg.url); fall back to querying the tab directly. If
+                // neither is available, the companion falls back to localhost.
+                let pageUrl =
+                    typeof url === "string" && url.trim() ? url.trim() : undefined
+                if (!pageUrl && tabId != null) {
+                    try {
+                        const tab = await chrome.tabs.get(tabId)
+                        pageUrl = tab?.url
+                    } catch {
+                        pageUrl = undefined
+                    }
+                }
+
                 const zipBlob = await postHtmlAndGetZip(
                     baseUrl,
-                    concatenatedHtml
+                    concatenatedHtml,
+                    pageUrl
                 )
                 port.postMessage({ step: "upload", status: "success" })
 
