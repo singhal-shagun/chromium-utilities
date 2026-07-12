@@ -1,4 +1,4 @@
-;(function () {
+; (function () {
     "use strict"
 
     const state = {
@@ -59,24 +59,9 @@
         }
     }
 
-    // ─── Filename helper ────────────────────────────────────────────
-
-    function inferFilename(title) {
-        const slug =
-            (typeof slugify === "function"
-                ? slugify(title)
-                : basicSlugify(title)) || "page"
-        return slug + ".md"
-    }
-
-    /** Basic slug fallback used when slug.js is unavailable. */
-    function basicSlugify(text) {
-        return String(text)
-            .toLowerCase()
-            .trim()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/(^-|-$)/g, "")
-    }
+    // `inferFilename` is provided as a global by src/core/filename.js
+    // (loaded in sidepanel.html); it falls back to a built-in basic slug
+    // when slug.js is unavailable.
 
     // ─── Selector row management ────────────────────────────────────
 
@@ -117,9 +102,19 @@
 
     // ─── Tab resolution (via service worker) ────────────────────────
 
-    /** Ask the service worker for the active tab (it has activeTab access). */
+    /** Ask the service worker for the active tab of the side panel's window. */
     async function resolveTab() {
-        const resp = await chrome.runtime.sendMessage({ type: "resolve-tab" })
+        let windowId
+        try {
+            const win = await chrome.windows.getCurrent()
+            if (win && typeof win.id === "number") windowId = win.id
+        } catch {
+            // Fall back to the service worker's lastFocusedWindow default.
+        }
+        const resp = await chrome.runtime.sendMessage({
+            type: "resolve-tab",
+            ...(typeof windowId === "number" ? { windowId } : {})
+        })
         if (resp.error) throw new Error(resp.error)
         return resp
     }
