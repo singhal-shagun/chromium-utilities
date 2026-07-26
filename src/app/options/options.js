@@ -1,19 +1,20 @@
-;(function () {
+; (function () {
     const companionInput = document.getElementById("companion-base-url")
     const statusEl = document.getElementById("status")
+    const DEFAULT_URL = globalThis.COMPANION_DEFAULT_BASE_URL
 
     /** Origins that are always covered by manifest host_permissions. */
-    const ALWAYS_PERMITTED_ORIGINS = ["http://localhost", "http://127.0.0.1"]
+    const ALWAYS_PERMITTED_ORIGINS = ["https://api.shagun-agent.localhost"]
 
     async function loadSettings() {
         const settings = await HtmlMarkdownStorage.getSettings()
-        companionInput.value =
-            settings.companionBaseUrl || "http://localhost:3000"
+        companionInput.placeholder = DEFAULT_URL
+        companionInput.value = settings.companionBaseUrl || DEFAULT_URL
     }
 
     async function saveSettings() {
         const value = (companionInput.value || "").trim()
-        const normalized = value || "http://localhost:3000"
+        const normalized = value || DEFAULT_URL
         await HtmlMarkdownStorage.saveSettings({ companionBaseUrl: normalized })
 
         // Request optional host permission if the URL points to a non-local origin
@@ -54,7 +55,7 @@
 
     async function testConnection() {
         const baseUrl =
-            (companionInput.value || "").trim() || "http://localhost:3000"
+            (companionInput.value || "").trim() || DEFAULT_URL
         setStatus("Testing companion app connection…", "info")
 
         try {

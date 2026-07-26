@@ -1,7 +1,9 @@
-;(function () {
+; (function () {
     "use strict"
 
-    const DEFAULT_BASE_URL = "http://localhost:3000"
+    importScripts("../core/constants.js")
+
+    const DEFAULT_BASE_URL = globalThis.COMPANION_DEFAULT_BASE_URL
     const MAX_HTML_BYTES = 200 * 1024
 
     // ─── Injected content ───────────────────────────────────────────
@@ -51,8 +53,8 @@
             // companion app is not running / not reachable. Make it actionable.
             throw new Error(
                 `Companion app not reachable at ${baseUrl}. ` +
-                    `Make sure it is running and allowed (host_permissions). ` +
-                    `Original error: ${err.message}`
+                `Make sure it is running and allowed (host_permissions). ` +
+                `Original error: ${err.message}`
             )
         }
         if (!response.ok) {
@@ -104,7 +106,7 @@
             // service worker idle timer. 20s < 30s leaves a safe margin.
             chrome.storage.local
                 .set({ __swHeartbeat: Date.now() })
-                .catch(() => {})
+                .catch(() => { })
         }
         return {
             start() {
@@ -202,7 +204,7 @@
                 // images") — retry without an icon so the notification still shows.
                 const err = chrome.runtime.lastError.message || ""
                 if (/image/i.test(err)) {
-                    chrome.notifications.create(baseOpts, () => {})
+                    chrome.notifications.create(baseOpts, () => { })
                 }
             }
         })

@@ -1,6 +1,6 @@
-;(function (global) {
+; (function (global) {
     const DEFAULT_SETTINGS = {
-        companionBaseUrl: "http://localhost:3000"
+        companionBaseUrl: global.COMPANION_DEFAULT_BASE_URL
     }
 
     function getSettings() {

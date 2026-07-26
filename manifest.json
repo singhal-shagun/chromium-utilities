@@ -16,7 +16,7 @@
         "notifications",
         "sidePanel"
     ],
-    "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
+    "host_permissions": ["https://*.localhost/*"],
     "optional_host_permissions": ["http://*/*", "https://*/*"],
     "action": {
         "default_title": "Chromium utilities"
