@@ -1,4 +1,4 @@
-; (function () {
+;(function () {
     const companionInput = document.getElementById("companion-base-url")
     const statusEl = document.getElementById("status")
     const DEFAULT_URL = globalThis.COMPANION_DEFAULT_BASE_URL
@@ -54,8 +54,7 @@
     }
 
     async function testConnection() {
-        const baseUrl =
-            (companionInput.value || "").trim() || DEFAULT_URL
+        const baseUrl = (companionInput.value || "").trim() || DEFAULT_URL
         setStatus("Testing companion app connection…", "info")
 
         try {

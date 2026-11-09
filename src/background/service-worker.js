@@ -186,13 +186,17 @@
 
     // ─── Notifications ──────────────────────────────────────────────
 
-    function showNotification(title, message) {
+    function showNotification(
+        title,
+        message,
+        contextMessage = "HTML → Markdown"
+    ) {
         const iconUrl = chrome.runtime.getURL("icons/icon128.png")
         const baseOpts = {
             type: "basic",
             title: title,
             message: message,
-            contextMessage: "HTML → Markdown"
+            contextMessage: contextMessage
         }
 
         // Pass a callback (not a promise) so the async image-download failure
@@ -213,6 +217,125 @@
     // ─── Message handler (side panel ↔ service worker) ─────────────
 
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+        if (msg.type === "import-watchlist") {
+            const doImport = async () => {
+                try {
+                    await chrome.scripting.executeScript({
+                        target: { tabId: msg.tabId },
+                        files: ["src/content-scripts/screener-scanner.js"]
+                    })
+
+                    const frames = await chrome.scripting.executeScript({
+                        target: { tabId: msg.tabId },
+                        func: () => {
+                            if (typeof window.__SCREENER_SCAN === "function") {
+                                return window.__SCREENER_SCAN()
+                            }
+                            return {
+                                ok: false,
+                                symbols: [],
+                                error: "Scanner helper not loaded."
+                            }
+                        }
+                    })
+
+                    const scanResult = frames?.[0]?.result
+                    if (!scanResult || !scanResult.ok) {
+                        throw new Error(
+                            scanResult?.error ||
+                            "Failed to scan Screener page DOM."
+                        )
+                    }
+
+                    const { symbols } = scanResult
+                    if (symbols.length === 0) {
+                        throw new Error(
+                            "No stock symbols found in the Screener table."
+                        )
+                    }
+
+                    const settings = await getSettings()
+                    const baseUrl =
+                        settings.companionBaseUrl || DEFAULT_BASE_URL
+                    const endpoint =
+                        msg.watchlistImportEndpoint ||
+                        "/api/portfolio-watchlist/import-from-screener"
+
+                    const cleanBaseUrl = baseUrl.replace(/\/+$/, "")
+                    const cleanEndpoint = endpoint.replace(/^\/+/, "")
+                    const fullImportUrl = `${cleanBaseUrl}/${cleanEndpoint}`
+
+                    const heartbeat = createHeartbeat()
+                    heartbeat.start()
+                    try {
+                        const response = await fetch(fullImportUrl, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type":
+                                    "application/json; charset=utf-8"
+                            },
+                            body: JSON.stringify({
+                                symbols: symbols,
+                                action: msg.action
+                            }),
+                            signal: AbortSignal.timeout(15000)
+                        })
+
+                        if (!response.ok) {
+                            let detail = ""
+                            try {
+                                const body = await response.text()
+                                detail = body ? ` — ${body.slice(0, 500)}` : ""
+                            } catch (_) { }
+                            throw new Error(
+                                `Server returned ${response.status}${detail}`
+                            )
+                        }
+
+                        const resultData = await response.json()
+                        const importedCount = Array.isArray(resultData.added)
+                            ? resultData.added.length
+                            : (resultData.importedCount ?? symbols.length)
+                        const skippedCount = Array.isArray(resultData.invalid)
+                            ? resultData.invalid.length
+                            : (resultData.skippedCount ?? 0)
+                        const duplicatesCount = Array.isArray(resultData.duplicates)
+                            ? resultData.duplicates.length
+                            : 0
+
+                        showNotification(
+                            "Watchlist Imported",
+                            `Successfully imported ${importedCount} stock(s) (skipped ${skippedCount} non-NSE, ${duplicatesCount} duplicate(s)).`,
+                            "Watchlist Import"
+                        )
+
+                        sendResponse({
+                            ok: true,
+                            importedCount: importedCount,
+                            skippedCount: skippedCount,
+                            duplicatesCount: duplicatesCount,
+                            added: resultData.added || [],
+                            duplicates: resultData.duplicates || [],
+                            invalid: resultData.invalid || [],
+                            symbols: symbols
+                        })
+                    } finally {
+                        heartbeat.stop()
+                    }
+                } catch (err) {
+                    showNotification(
+                        "Import Failed",
+                        err.message,
+                        "Watchlist Import"
+                    )
+                    sendResponse({ ok: false, error: err.message })
+                }
+            }
+
+            doImport()
+            return true
+        }
+
         // Probe a tab to check if we have injection permission
         if (msg.type === "check-permission") {
             chrome.scripting
@@ -373,7 +496,7 @@
                     typeof url === "string" && url.trim()
                         ? url.trim()
                         : undefined
-                if (!pageUrl && tabId != null) {
+                if (!pageUrl && tabId !== null && tabId !== undefined) {
                     try {
                         const tab = await chrome.tabs.get(tabId)
                         pageUrl = tab?.url

@@ -213,3 +213,185 @@ button:disabled {
 .status.info {
     color: #2563eb;
 }
+
+/* ─── Watchlist Import Widget ─────────────────────── */
+
+.watchlist-section {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.watchlist-section h2 {
+    margin: 0;
+    font-size: 15px;
+    color: #111827;
+}
+
+.watchlist-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.radio-group label {
+    font-weight: normal;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.radio-group input {
+    width: auto;
+    margin: 0;
+}
+
+.watchlist-settings {
+    font-size: 12px;
+    color: #4b5563;
+    margin-top: 4px;
+}
+
+.watchlist-settings summary {
+    cursor: pointer;
+    font-weight: 600;
+    user-select: none;
+}
+
+.watchlist-settings .field-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.watchlist-settings input {
+    font-size: 12px;
+    padding: 6px 8px;
+}
+
+.watchlist-status {
+    font-size: 13px;
+    min-height: 18px;
+    line-height: 1.4;
+}
+
+.watchlist-status.error {
+    color: #dc2626;
+}
+
+.watchlist-status.success {
+    color: #059669;
+}
+
+.watchlist-status.info {
+    color: #2563eb;
+}
+
+/* ─── Tabs Layout ──────────────────────────────────── */
+
+.tabs-header {
+    display: flex;
+    border-bottom: 2px solid #e5e7eb;
+    margin-bottom: 16px;
+    gap: 4px;
+}
+
+.tab-button {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 8px 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #6b7280;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-bottom: -2px; /* overlap border */
+}
+
+.tab-button:hover {
+    color: #374151;
+}
+
+.tab-button.active {
+    color: #2563eb;
+    border-bottom-color: #2563eb;
+}
+
+.tab-panel {
+    display: none;
+}
+
+.tab-panel.active {
+    display: block;
+}
+
+/* ─── Import Results Table ────────────────────────── */
+
+.import-results-container {
+    margin-top: 12px;
+    max-height: 250px;
+    overflow-y: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+
+.import-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.import-table th,
+.import-table td {
+    border: 1px solid #e5e7eb;
+    padding: 6px 8px;
+    text-align: left;
+}
+
+.import-table th {
+    background-color: #f9fafb;
+    font-weight: 600;
+    color: #374151;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.import-symbol {
+    font-family: monospace;
+    font-weight: bold;
+}
+
+.status-added {
+    background-color: #ecfdf5;
+    color: #065f46;
+    font-weight: 600;
+}
+
+.status-duplicate {
+    background-color: #fffbeb;
+    color: #92400e;
+    font-weight: 600;
+}
+
+.status-invalid {
+    background-color: #fef2f2;
+    color: #991b1b;
+    font-weight: 600;
+}

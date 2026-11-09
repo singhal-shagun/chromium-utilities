@@ -1,4 +1,4 @@
-; (function (global) {
+;(function (global) {
     /**
      * The default base URL of the companion app.
      *

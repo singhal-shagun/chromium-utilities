@@ -1,6 +1,7 @@
 ; (function (global) {
     const DEFAULT_SETTINGS = {
-        companionBaseUrl: global.COMPANION_DEFAULT_BASE_URL
+        companionBaseUrl: global.COMPANION_DEFAULT_BASE_URL,
+        watchlistImportEndpoint: "/api/portfolio-watchlist/import-from-screener"
     }
 
     function getSettings() {
@@ -20,7 +21,10 @@
             const syncSettings = {
                 companionBaseUrl:
                     settings.companionBaseUrl ||
-                    DEFAULT_SETTINGS.companionBaseUrl
+                    DEFAULT_SETTINGS.companionBaseUrl,
+                watchlistImportEndpoint:
+                    settings.watchlistImportEndpoint ||
+                    DEFAULT_SETTINGS.watchlistImportEndpoint
             }
 
             chrome.storage.sync.set(syncSettings, () => {

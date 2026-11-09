@@ -1,4 +1,4 @@
-;(function () {
+; (function () {
     "use strict"
 
     const state = {
@@ -41,12 +41,30 @@
     function bindEvents() {
         $("#add-row-btn").addEventListener("click", () => addRow())
         $("#convert-btn").addEventListener("click", handleConvert)
+        $("#import-watchlist-btn").addEventListener(
+            "click",
+            handleWatchlistImport
+        )
+        $("#watchlist-endpoint").addEventListener(
+            "change",
+            saveWatchlistEndpoint
+        )
+        $("#tab-html-markdown").addEventListener("click", () =>
+            switchTab("tab-html-markdown")
+        )
+        $("#tab-watchlist-import").addEventListener("click", () =>
+            switchTab("tab-watchlist-import")
+        )
     }
 
     async function loadInitialState() {
         try {
             const settings = await HtmlMarkdownStorage.getSettings()
             state.settings = settings
+            if (settings.watchlistImportEndpoint) {
+                $("#watchlist-endpoint").value =
+                    settings.watchlistImportEndpoint
+            }
             const tab = await resolveTab()
             state.activeTabId = tab.tabId
             state.activeTabTitle = tab.title || "page"
@@ -54,8 +72,32 @@
             $("#filename").value = inferFilename(state.activeTabTitle)
             addRow()
             setStatus("Ready. Add selectors and click Convert.", "info")
+
+            const pattern = /^https:\/\/(www\.)?screener\.in\/screens\//i
+            if (pattern.test(state.activeTabUrl)) {
+                switchTab("tab-watchlist-import")
+            } else {
+                switchTab("tab-html-markdown")
+            }
         } catch (error) {
             setStatus(`Unable to initialize:\n${fmtErr(error)}`, "error")
+        }
+    }
+
+    function switchTab(tabId) {
+        document
+            .querySelectorAll(".tab-button")
+            .forEach((btn) => btn.classList.remove("active"))
+        document
+            .querySelectorAll(".tab-panel")
+            .forEach((panel) => panel.classList.remove("active"))
+
+        if (tabId === "tab-html-markdown") {
+            $("#tab-html-markdown").classList.add("active")
+            $("#panel-html-markdown").classList.add("active")
+        } else if (tabId === "tab-watchlist-import") {
+            $("#tab-watchlist-import").classList.add("active")
+            $("#panel-watchlist-import").classList.add("active")
         }
     }
 
@@ -208,6 +250,150 @@
             state.activePickerRow = null
             setStatus("Picker cancelled.", "info")
         }
+    }
+
+    // ─── Watchlist flow ─────────────────────────────────────────────
+
+    async function saveWatchlistEndpoint() {
+        const val = $("#watchlist-endpoint").value.trim()
+        if (!val) return
+        try {
+            state.settings.watchlistImportEndpoint = val
+            await HtmlMarkdownStorage.saveSettings(state.settings)
+        } catch (err) {
+            setWatchlistStatus(
+                `Failed to save settings: ${err.message}`,
+                "error"
+            )
+        }
+    }
+
+    async function handleWatchlistImport() {
+        setWatchlistStatus("", "")
+        const container = $("#import-results-container")
+        if (container) container.innerHTML = ""
+        const btn = $("#import-watchlist-btn")
+        btn.disabled = true
+
+        try {
+            const tab = await resolveTab()
+            state.activeTabId = tab.tabId
+            state.activeTabTitle = tab.title || "page"
+            state.activeTabUrl = tab.url || ""
+
+            const pattern = /^https:\/\/(www\.)?screener\.in\/screens\//i
+            if (!pattern.test(state.activeTabUrl)) {
+                setWatchlistStatus(
+                    "This feature is designed to work only on URLs matching the https://www.screener.in/screens/* pattern.",
+                    "error"
+                )
+                btn.disabled = false
+                return
+            }
+
+            const actionVal = document.querySelector(
+                'input[name="watchlist-action"]:checked'
+            ).value
+            const endpointVal =
+                $("#watchlist-endpoint").value.trim() ||
+                "/api/portfolio-watchlist/import-from-screener"
+
+            setWatchlistStatus("Scanning page and importing...", "info")
+
+            const resp = await sendWithPermissionRetry({
+                type: "import-watchlist",
+                tabId: tab.tabId,
+                action: actionVal,
+                watchlistImportEndpoint: endpointVal
+            })
+
+            if (!resp) {
+                throw new Error("No response received from background task.")
+            }
+            if (!resp.ok) {
+                throw new Error(
+                    resp.error || "Failed to perform watchlist import."
+                )
+            }
+
+            let statusMsg = `Successfully imported ${resp.importedCount} stocks.`
+            if ((resp.skippedCount || 0) > 0 || (resp.duplicatesCount || 0) > 0) {
+                statusMsg += ` (skipped: ${resp.skippedCount || 0} non-NSE, ${resp.duplicatesCount || 0} duplicate(s)).`
+            }
+
+            setWatchlistStatus(statusMsg, "success")
+            renderImportResults(resp)
+        } catch (err) {
+            setWatchlistStatus(fmtErr(err), "error")
+        } finally {
+            btn.disabled = false
+        }
+    }
+
+    function renderImportResults(resp) {
+        const container = $("#import-results-container")
+        if (!container) return
+        container.innerHTML = ""
+
+        if (!resp || !Array.isArray(resp.symbols) || resp.symbols.length === 0) {
+            return
+        }
+
+        const table = document.createElement("table")
+        table.className = "import-table"
+
+        // Create table header
+        const thead = document.createElement("thead")
+        thead.innerHTML = `
+            <tr>
+                <th>Symbol</th>
+                <th>Status</th>
+            </tr>
+        `
+        table.appendChild(thead)
+
+        const tbody = document.createElement("tbody")
+
+        // Sets for fast lookup
+        const addedSet = new Set(resp.added || [])
+        const duplicatesSet = new Set(resp.duplicates || [])
+        const invalidSet = new Set(resp.invalid || [])
+
+        // Map status based on membership in the original order
+        for (const symbol of resp.symbols) {
+            let status = ""
+            let className = ""
+
+            if (addedSet.has(symbol)) {
+                status = "Added"
+                className = "status-added"
+            } else if (duplicatesSet.has(symbol)) {
+                status = "Duplicate"
+                className = "status-duplicate"
+            } else if (invalidSet.has(symbol)) {
+                status = "Invalid/non-NSE"
+                className = "status-invalid"
+            } else {
+                continue
+            }
+
+            const tr = document.createElement("tr")
+            tr.innerHTML = `
+                <td class="import-symbol">${symbol}</td>
+                <td class="${className}">${status}</td>
+            `
+            tbody.appendChild(tr)
+        }
+
+        table.appendChild(tbody)
+        container.appendChild(table)
+    }
+
+    function setWatchlistStatus(message, type) {
+        const el = $("#watchlist-status")
+        if (!el) return
+        el.textContent = message || ""
+        el.className = `watchlist-status ${type || ""}`.trim()
     }
 
     // ─── Convert flow ───────────────────────────────────────────────
